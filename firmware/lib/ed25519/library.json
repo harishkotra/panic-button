@@ -1,0 +1,6 @@
+{
+  "name": "ed25519",
+  "version": "1.0.3",
+  "description": "orlp/ed25519, vendored (public domain / CC0). seed.c removed: the device derives its key from esp_random, not /dev/urandom.",
+  "build": { "flags": ["-O2"] }
+}

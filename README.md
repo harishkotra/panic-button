@@ -23,6 +23,9 @@ Chain abstraction is usually a dropdown. This is the version you can hit.
 The refusal is the product. A kill switch you cannot bound is a liability, so the cap and the
 destination are set before the emergency, not during it.
 
+[`docs/demo.mp4`](docs/demo.mp4) is the 18 second capture: refused at a $1,000 cap, then the same
+press escaping once the cap is raised.
+
 ---
 
 ## Run it
@@ -151,9 +154,11 @@ later.
 - Settlement is not executed. The relay asks for dry quotes, so no deposit is made and no funds move
   on chain. The authorisation path is real end to end, the money path stops at the quote. This is
   the honest boundary of a two day build.
-- The firmware is written and reviewed but was not compiled here: this machine has no ESP32
-  toolchain. `pio run -d firmware` builds it where PlatformIO exists. Everything it calls is
-  exercised by `npm run verify`.
+- The firmware is written, reviewed and compiled: `pio run -d firmware` builds clean on
+  `espressif32@8.0.0` for the YD-ESP32-S3, 1,248,021 bytes of flash (37.3%) and 47,056 bytes of RAM
+  (14.4%). It was not flashed here, because the board is on the other desk. `ed25519` is vendored
+  under `firmware/lib/ed25519` (orlp, CC0) since the registry package does not exist; compile
+  errors found that way are the reason the signing call now uses the derived private key.
 - No enclosure, no battery, no OTA. The object in the video is the reference build on a breadboard.
 
 ---
@@ -247,10 +252,11 @@ web/
   style.css       365  paper, rules, screen, one red
   app.js          332  state, quotes, SSE, sign, panic
 firmware/src/
-  main.cpp        272  S3 firmware: challenge, sign, draw
+  main.cpp        270  S3 firmware: challenge, sign, draw
+firmware/lib/ed25519/  vendored signing, CC0
 ```
 
-2,507 lines, no bundler, no framework, no build step for the frontend. The only runtime dependencies
+2,505 lines of our own code, no bundler, no framework, no build step for the frontend. The only runtime dependencies
 are `fastify`, `tweetnacl`, `ws`, and two fastify plugins. A machine reviewer can read the whole
 system in one sitting, which is the point.
 

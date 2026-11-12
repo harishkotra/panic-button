@@ -45,6 +45,7 @@ static TFT_eSPI tft = TFT_eSPI();
 static Preferences nvs;
 
 static uint8_t seed[32];
+static uint8_t priv[64];
 static uint8_t pub[32];
 static char pubB58[64];
 
@@ -137,7 +138,7 @@ static void loadKey() {
     esp_fill_random(seed, 32);
     nvs.putBytes("seed", seed, 32);
   }
-  ed25519_create_keypair(pub, seed);
+  ed25519_create_keypair(pub, priv, seed);
   strncpy(pubB58, b58encode(pub, 32).c_str(), sizeof(pubB58) - 1);
   nvs.end();
   Serial.printf("device pubkey: %s\n", pubB58);
@@ -169,10 +170,7 @@ static void fire(bool yolo) {
 
   screen("SIGNING", "ed25519 over challenge", TFT_YELLOW);
   uint8_t sig[64];
-  uint8_t sk[64];
-  memcpy(sk, seed, 32);
-  memcpy(sk + 32, pub, 32);
-  ed25519_sign(sig, (const uint8_t *)msg, strlen(msg), pub, sk);
+  ed25519_sign(sig, (const uint8_t *)msg, strlen(msg), pub, priv);
 
   JsonDocument panicReq;
   panicReq["challengeId"] = id;
