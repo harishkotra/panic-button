@@ -1,0 +1,31 @@
+{
+  "name": "panic-button",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node --import tsx server/src/index.ts",
+    "typecheck": "tsc -p server/tsconfig.json",
+    "demo": "node --import tsx scripts/panic.mjs",
+    "verify": "node scripts/verify.mjs",
+    "start": "node --import tsx server/src/index.ts",
+    "seed": "node scripts/init-demo.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@fastify/cors": "^11.4.1",
+    "@fastify/static": "^10.1.10",
+    "fastify": "^5.12.8",
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

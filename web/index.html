@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panic Button — relay console</title>
+<meta name="description" content="One button that sweeps a multi-chain portfolio into a safe account through NEAR Intents." />
+<link rel="stylesheet" href="/style.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='9' r='5.5' fill='%23b3141f'/></svg>" />
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <h1>Panic&nbsp;Button</h1>
+    <span class="sub">one button, every chain, one account that is safe</span>
+    <span class="meta">
+      <span><span class="dot" id="feedDot"></span> relay <span id="relayHost">localhost</span></span>
+      <span id="priceStamp">prices —</span>
+    </span>
+  </header>
+
+  <main class="grid">
+
+    <!-- ================= the device ================= -->
+    <section class="device" aria-label="Device">
+      <div class="device-body">
+        <div class="device-brand"><b>PANIC BUTTON</b><span>S3 · 2.4&quot;</span></div>
+
+        <div class="screen" id="screen">
+          <div class="screen-hd"><span id="screenMode">READY</span><span class="rec" id="screenRec">LIVE</span></div>
+          <div class="screen-body" id="screenBody">booting…</div>
+          <div class="screen-foot"><span id="screenLeft">ed25519</span><span id="screenRight">—</span></div>
+        </div>
+
+        <div class="deck">
+          <div class="deck-text">
+            <b>OPERATING PROCEDURE</b>
+            1. press the plunger<br />
+            2. sign once on device<br />
+            3. everything lands as USDC
+          </div>
+          <div class="plunger-slot">
+            <button class="plunger" id="plunger">
+              <span class="lbl">PANIC</span>
+              <span id="plungerSub">press</span>
+            </button>
+            <button class="cover" id="cover" aria-expanded="false">
+              <span>flip cover</span>
+              <small id="coverSub">guard down</small>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="device-foot">
+        <span id="deviceKey">device key —</span>
+        <button class="btn ghost" id="drillBtn" style="padding:3px 8px;font-size:9.5px">drill</button>
+      </div>
+      <p class="note">
+        The screen above is drawn from the same relay endpoints the firmware calls.
+        Nothing on this page can move funds: it produces a signed quote set, and the
+        relay records a receipt.
+      </p>
+    </section>
+
+    <!-- ================= escape stage ================= -->
+    <section class="stage" aria-label="Escape plan">
+      <div class="stage-head">
+        <h2 class="section">Escape plan</h2>
+        <span class="stamp" id="stageStamp">quotes —</span>
+      </div>
+
+      <div class="fig">
+        <span class="n"><span id="netUsd">$0</span></span>
+        <span class="cap" id="figCap">survives the escape, as USDC in the safe account</span>
+        <span class="delta"><span id="grossUsd">$0</span> at risk <b id="feeUsd">— cost</b></span>
+      </div>
+
+      <table class="legs" id="legs">
+        <thead>
+          <tr>
+            <th>chain</th>
+            <th>holding</th>
+            <th class="num">usd</th>
+            <th class="num">lands as</th>
+            <th class="num">cost</th>
+            <th class="num">eta</th>
+          </tr>
+        </thead>
+        <tbody id="legsBody">
+          <tr><td colspan="6" class="empty">waiting for a policy…</td></tr>
+        </tbody>
+      </table>
+
+      <div class="totals" id="totals"></div>
+      <p class="note" id="feeNote"></p>
+    </section>
+
+    <!-- ================= rail ================= -->
+    <aside class="rail">
+
+      <section class="block">
+        <h3>Under watch</h3>
+        <table class="hold" id="holdings"><tbody></tbody></table>
+        <form class="attach" id="attachForm">
+          <div class="row">
+            <select id="attachChain">
+              <option value="base">Base</option>
+              <option value="arbitrum">Arbitrum</option>
+              <option value="ethereum">Ethereum</option>
+              <option value="solana">Solana</option>
+              <option value="bitcoin">Bitcoin</option>
+            </select>
+            <input id="attachAddr" placeholder="0x… / address to watch" spellcheck="false" />
+          </div>
+          <button class="btn ghost" type="submit" id="attachBtn">attach read-only address</button>
+        </form>
+      </section>
+
+      <section class="block">
+        <h3>Policy</h3>
+        <dl class="facts" id="facts"></dl>
+      </section>
+
+      <section class="block">
+        <h3>Receipts</h3>
+        <ol class="log" id="log"><li class="empty">no panics yet</li></ol>
+      </section>
+
+    </aside>
+  </main>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="/vendor/nacl.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
