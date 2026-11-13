@@ -577,6 +577,7 @@ static void printHelp() {
   Serial.println("  test                       re-draw the screen with current config");
   Serial.println("  probe                      cycle driver/invert/size, label each attempt on screen");
   Serial.println("  frame                      draw a border, corner letters and a centre cross");
+  Serial.println("  ruler                      ruled lines every 20 rows, labelled, to measure the glass");
   Serial.println("  set offset <x> <y>         shift the memory window when the image is clipped");
   Serial.println("  key                        print this device's public key");
   Serial.println("  status                     print config and wifi state");
@@ -634,6 +635,26 @@ static void probePanel() {
   tft.ready = false;
   tft.configure();
   Serial.println("probe done, config restored");
+}
+
+// The panel only renders part of what we write, so measure it instead of guessing:
+// ruled lines every 20 rows, each labelled with its own y. The last visible number
+// is the real height of the glass in our coordinate space.
+static void drawRuler() {
+  if (!tft.ready) { Serial.println("display not ready"); return; }
+  int W = tft.width(), H = tft.height();
+  tft.fillScreen(0x0000);
+  tft.setTextSize(2);
+  for (int y = 0; y < H; y += 20) {
+    tft.drawLine(0, y, W, y, 0xFFFF);
+    tft.setTextColor((y / 20) % 2 ? 0x07E0 : 0xFD20, 0x0000);
+    tft.setTextDatum(TL_DATUM);
+    tft.drawString(String(y), 4, y + 1);
+  }
+  tft.setTextColor(0xF800, 0x0000);
+  tft.setTextDatum(BC_DATUM);
+  tft.drawString("bottom=" + String(H), W / 2, H - 2);
+  Serial.printf("ruler drawn, claims %d rows\n", H);
 }
 
 // Draw a shape whose geometry is unambiguous from across the room: if the border
@@ -721,6 +742,7 @@ static void handleLine(String line) {
   else if (cmd == "panic") fire();
   else if (cmd == "probe") probePanel();
   else if (cmd == "frame") drawFrame();
+  else if (cmd == "ruler") drawRuler();
   else if (cmd == "test") {
     tft.ready = false;
     tft.configure();
