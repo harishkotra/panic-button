@@ -128,6 +128,24 @@ Now the browser console's key is rejected by the relay. The device holds an
 ed25519 keypair generated from the S3's hardware RNG on first boot and stored in
 NVS. The private key never leaves the chip and never appears on the laptop.
 
+### The press, on the actual board
+
+![the panel after a real press](docs/hardware/refused-20261113.jpeg)
+
+Board `FoGadzn243LXvstSF3iJ7Vunbdz5mh4uLawrbwnCS2eU`, WiFi `192.168.68.61`, the red
+plunger pressed by hand:
+
+```
+panic: challenge
+panic: signed 178 bytes, challenge 365f2230-90de-448b-bed4-708bd6840a06
+panic: relay 402
+panic: REFUSED portfolio $64986064.71 exceeds cap $1000
+```
+
+That is `docs/hardware/press-20261113-2028.log`, verbatim. The relay stored the
+matching record with `verdict: REJECTED` and `reason: portfolio $64986064.71 exceeds
+cap $1000`; `GET /api/panics` returns it. Nothing moved.
+
 ### Proving it to someone who was not in the room
 
 Three artefacts, all checkable:
@@ -238,10 +256,11 @@ later.
   attached; the serial capture from `./scripts/hw.sh proof` is the artefact that lands in
   `docs/hardware/`. `ed25519` is vendored under `firmware/lib/ed25519` (orlp, CC0) because no
   PlatformIO package exists for it.
-- **The video and screenshots show the browser console, not a physical device.** The device in them
-  is HTML and CSS drawn at the S3's 320x240 proportions; the button, cover and screen states are the
-  console's, and the three calls behind it are the real ones. No S3 was flashed for this build, so
-  there is no footage of the real screen. Treat the clip as proof of the flow, not of the hardware.
+- **The browser console is not the device.** `docs/demo.mp4`, `docs/console.png` and the `ESCAPED`
+  screenshot come from the relay's HTML console, drawn at the panel's proportions; the three calls
+  behind them are real. The device itself is proven separately: `firmware/HARDWARE.md` section 8,
+  `docs/hardware/press-20261113-2028.log` and `docs/hardware/refused-20261113.jpeg`. No footage of
+  the physical press exists yet, so the clip shows the flow and the photo shows the hardware.
 - No enclosure, no battery, no OTA.
 
 ---
