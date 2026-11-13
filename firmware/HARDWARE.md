@@ -154,3 +154,28 @@ Run `test` after every change. If it stays dark with all pins correct, check the
 board's 3V3 rail with a meter; some YD-ESP32-S3 clones ship with a 5 V-only
 regulator arrangement on the display header and need the screen fed from the 5 V
 pin while logic stays 3V3.
+
+## 8. The press that actually happened
+
+Two runs are on the record from board `FoGadzn243LXvstSF3iJ7Vunbdz5mh4uLawrbwnCS2eU`,
+both over WiFi at `192.168.68.61`, both signed on the chip with the same key that
+never leaves NVS:
+
+- `docs/hardware/serial-20261113-195938.log` — `panic` typed over serial.
+- `docs/hardware/press-20261113-2028.log` — the red plunger pressed by hand.
+
+Both end the same way:
+
+```
+panic: challenge
+panic: signed 178 bytes, challenge 365f2230-90de-448b-bed4-708bd6840a06
+panic: relay 402
+panic: REFUSED portfolio $64986064.71 exceeds cap $1000
+```
+
+and the relay stores the matching record (`verdict: REJECTED`, `reason: portfolio
+$64986064.71 exceeds cap $1000`, `devicePubKey: FoGadzn…S2eU`).
+
+The button is on GPIO0. `watch on` (see `help`) reports every GPIO that changes,
+which is how the pin was identified instead of guessed; GPIO12 on this carrier is
+unconnected and floats, so it chatters in the log — ignore it.
