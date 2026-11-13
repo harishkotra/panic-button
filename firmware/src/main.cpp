@@ -604,6 +604,7 @@ static void printHelp() {
   Serial.println("  set rot <0-3>              rotation");
   Serial.println("  set invert <0|1>           IPS panels are usually 1");
   Serial.println("  set buttons <plunger,cover>  -1 disables, cover -1 = no interlock");
+  Serial.println("  watch on|off  - report any GPIO that changes, to find the button pin");
   Serial.println("  test                       re-draw the screen with current config");
   Serial.println("  probe                      cycle driver/invert/size, label each attempt on screen");
   Serial.println("  frame                      draw a border, corner letters and a centre cross");
@@ -752,6 +753,38 @@ static bool applySet(const String &key, const String &value) {
   return true;
 }
 
+// ───────────────────────────────────────────────────────── pin watch ──
+// The plunger lives on whichever GPIO the switch was actually soldered to, and
+// guessing costs a flash cycle each guess. `watch on` reports every transition
+// on every safe spare pin, so one press of the real button names its pin.
+static bool gWatch = false;
+static const int kWatchPins[] = {0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 38, 39, 46, 48};
+static const int kWatchCount = sizeof(kWatchPins) / sizeof(kWatchPins[0]);
+static int gWatchBase[32];
+static uint32_t gWatchLast = 0;
+
+static void startWatch() {
+  for (int i = 0; i < kWatchCount; i++) pinMode(kWatchPins[i], INPUT_PULLUP);
+  delay(200);
+  for (int i = 0; i < kWatchCount; i++) gWatchBase[i] = digitalRead(kWatchPins[i]);
+  gWatch = true;
+  Serial.println("watch on - press the button, any pin that changes is reported");
+}
+
+static void pollWatch() {
+  if (!gWatch) return;
+  uint32_t now = millis();
+  if (now - gWatchLast < 40) return;
+  gWatchLast = now;
+  for (int i = 0; i < kWatchCount; i++) {
+    int v = digitalRead(kWatchPins[i]);
+    if (v != gWatchBase[i]) {
+      Serial.printf("watch pin %d -> %s\n", kWatchPins[i], v == LOW ? "LOW" : "HIGH");
+      gWatchBase[i] = v;
+    }
+  }
+}
+
 static void handleLine(String line) {
   line.trim();
   if (!line.length()) return;
@@ -773,6 +806,7 @@ static void handleLine(String line) {
   else if (cmd == "probe") probePanel();
   else if (cmd == "frame") drawFrame();
   else if (cmd == "ruler") drawRuler();
+  else if (cmd == "watch") { if (rest == "on") startWatch(); else { gWatch = false; Serial.println("watch off"); } }
   else if (cmd == "test") {
     tft.ready = false;
     tft.configure();
@@ -877,6 +911,7 @@ void setup() {
 void loop() {
   pollSerial();
   pollButtons();
+  pollWatch();
 
   static uint32_t lastPoll = 0;
   if (millis() - lastPoll > 60000) {
