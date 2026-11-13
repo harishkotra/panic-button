@@ -31,6 +31,7 @@ struct Cfg {
   int drv = 0;          // 0 ILI9341, 1 ST7789, 2 ST7735
   int rot = 0;
   int w = 240, h = 320;
+  int offX = 0, offY = 0;   // memory window offset; ST7789 240x240 lives 80 rows into a 320-row RAM
   bool inv = false;
   int pinPlunger = 0;   // onboard BOOT on most S3 devkits
   int pinCover = 5;     // jumper to GND = cover down; -1 disables the interlock
@@ -55,6 +56,8 @@ static void loadCfg() {
   cfg.rot = prefs.getInt("rot", cfg.rot);
   cfg.w = prefs.getInt("w", cfg.w);
   cfg.h = prefs.getInt("h", cfg.h);
+  cfg.offX = prefs.getInt("ox", cfg.offX);
+  cfg.offY = prefs.getInt("oy", cfg.offY);
   cfg.inv = prefs.getBool("inv", cfg.inv);
   cfg.pinPlunger = prefs.getInt("plg", cfg.pinPlunger);
   cfg.pinCover = prefs.getInt("cov", cfg.pinCover);
@@ -77,6 +80,8 @@ static void saveCfg() {
   prefs.putInt("rot", cfg.rot);
   prefs.putInt("w", cfg.w);
   prefs.putInt("h", cfg.h);
+  prefs.putInt("ox", cfg.offX);
+  prefs.putInt("oy", cfg.offY);
   prefs.putBool("inv", cfg.inv);
   prefs.putInt("plg", cfg.pinPlunger);
   prefs.putInt("cov", cfg.pinCover);
@@ -117,10 +122,16 @@ class Screen : public lgfx::LGFX_Device {
     pc.pin_cs = cfg.cs;
     pc.pin_rst = cfg.rst;
     pc.pin_busy = -1;
+    // A 240x240 ST7789 is a 240x320 controller with the visible window 80 rows
+    // down. Claiming a 240-row memory breaks rotation and shifts every pixel, so
+    // declare the real RAM and offset into it.
+    bool squareST = (cfg.drv == 1 && cfg.w == 240 && cfg.h == 240);
     pc.memory_width = cfg.w;
-    pc.memory_height = cfg.h;
+    pc.memory_height = squareST ? 320 : cfg.h;
     pc.panel_width = cfg.w;
     pc.panel_height = cfg.h;
+    pc.offset_x = cfg.offX;
+    pc.offset_y = cfg.offY + (squareST ? 80 : 0);
     pc.invert = cfg.inv;
     pc.readable = false;
     pc.bus_shared = false;
@@ -565,6 +576,8 @@ static void printHelp() {
   Serial.println("  set buttons <plunger,cover>  -1 disables, cover -1 = no interlock");
   Serial.println("  test                       re-draw the screen with current config");
   Serial.println("  probe                      cycle driver/invert/size, label each attempt on screen");
+  Serial.println("  frame                      draw a border, corner letters and a centre cross");
+  Serial.println("  set offset <x> <y>         shift the memory window when the image is clipped");
   Serial.println("  key                        print this device's public key");
   Serial.println("  status                     print config and wifi state");
   Serial.println("  panic                      fire without the button");
@@ -623,6 +636,31 @@ static void probePanel() {
   Serial.println("probe done, config restored");
 }
 
+// Draw a shape whose geometry is unambiguous from across the room: if the border
+// closes and A/B/C/D sit in the right corners, coordinates are right. If letters
+// are missing or the border runs off an edge, the memory window is offset.
+static void drawFrame() {
+  if (!tft.ready) { Serial.println("display not ready"); return; }
+  int W = tft.width(), H = tft.height();
+  tft.fillScreen(0x0000);
+  tft.drawRect(0, 0, W, H, 0xFFFF);
+  tft.drawRect(2, 2, W - 4, H - 4, 0xFFFF);
+  tft.drawLine(0, H / 2, W, H / 2, 0xF800);
+  tft.drawLine(W / 2, 0, W / 2, H, 0xF800);
+  tft.setTextSize(3);
+  tft.setTextColor(0x07E0, 0x0000);
+  tft.setTextDatum(TL_DATUM); tft.drawString("A", 8, 8);
+  tft.setTextDatum(TR_DATUM); tft.drawString("B", W - 8, 8);
+  tft.setTextDatum(BL_DATUM); tft.drawString("C", 8, H - 8);
+  tft.setTextDatum(BR_DATUM); tft.drawString("D", W - 8, H - 8);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextSize(2);
+  tft.drawString(String(W) + "x" + String(H) + " rot" + String(cfg.rot), W / 2, H / 2 - 14);
+  tft.setTextSize(1);
+  tft.drawString("off " + String(cfg.offX) + "," + String(cfg.offY), W / 2, H / 2 + 12);
+  Serial.printf("frame drawn %dx%d rot=%d off=%d,%d\n", W, H, cfg.rot, cfg.offX, cfg.offY);
+}
+
 static void printStatus() {
   Serial.printf("ssid=%s relay=%s account=%s\n", cfg.ssid.c_str(), cfg.relay.c_str(), cfg.account.c_str());
   Serial.printf("panel=%s %dx%d rot=%d invert=%d pins cs=%d dc=%d rst=%d bl=%d mosi=%d sclk=%d\n",
@@ -645,6 +683,11 @@ static bool applySet(const String &key, const String &value) {
     else if (value == "st7735") { cfg.drv = 2; cfg.w = 128; cfg.h = 160; }
     else return false;
   } else if (key == "rot") cfg.rot = value.toInt();
+  else if (key == "offset") {
+    int a, b;
+    if (sscanf(value.c_str(), "%d %d", &a, &b) != 2) return false;
+    cfg.offX = a; cfg.offY = b;
+  }
   else if (key == "invert") cfg.inv = value.toInt() != 0;
   else if (key == "pins") {
     int v[6];
@@ -677,6 +720,7 @@ static void handleLine(String line) {
   }
   else if (cmd == "panic") fire();
   else if (cmd == "probe") probePanel();
+  else if (cmd == "frame") drawFrame();
   else if (cmd == "test") {
     tft.ready = false;
     tft.configure();
