@@ -10,8 +10,6 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include <ArduinoJson.h>
 #include <LovyanGFX.hpp>
@@ -368,28 +366,57 @@ static String urlOf(const String &path) {
   return base + path;
 }
 
+// A hand-rolled HTTP/1.1 client, on purpose. HTTPClient crashed the board with
+// InstrFetchProhibited (PC=0) the first time it was handed a WiFiClient on this
+// core, and the relay is plain HTTP on the LAN anyway, so speak just enough HTTP
+// to be boring: one request, read to close, split headers off the body.
 static int httpJson(const String &method, const String &path, const String &body, String &out) {
-  HTTPClient http;
-  http.setTimeout(9000);
-  http.setConnectTimeout(6000);
-  String url = urlOf(path);
-  int code;
-  if (url.startsWith("https://")) {
-    WiFiClientSecure c;
-    c.setInsecure();
-    if (!http.begin(c, url)) return -1;
-    http.addHeader("content-type", "application/json");
-    code = (method == "GET") ? http.GET() : http.POST(body);
-    out = http.getString();
-    http.end();
-  } else {
-    WiFiClient c;
-    if (!http.begin(c, url)) return -1;
-    http.addHeader("content-type", "application/json");
-    code = (method == "GET") ? http.GET() : http.POST(body);
-    out = http.getString();
-    http.end();
+  if (WiFi.status() != WL_CONNECTED) { out = "no wifi"; return -1; }
+
+  String base = cfg.relay;
+  if (base.startsWith("https://")) { out = "relay must be http://"; return -2; }
+  int scheme = base.indexOf("://");
+  if (scheme >= 0) base = base.substring(scheme + 3);
+  while (base.endsWith("/")) base.remove(base.length() - 1);
+
+  int slash = base.indexOf('/');
+  String prefix = slash >= 0 ? base.substring(0, slash) : base;
+  String pathPrefix = slash >= 0 ? base.substring(slash) : "";
+  int colon = prefix.lastIndexOf(':');
+  String host = colon >= 0 ? prefix.substring(0, colon) : prefix;
+  uint16_t port = colon >= 0 ? (uint16_t)prefix.substring(colon + 1).toInt() : 80;
+  if (!host.length()) { out = "no relay host"; return -2; }
+
+  WiFiClient c;
+  c.setTimeout(9);
+  if (!c.connect(host.c_str(), port, 6000)) { out = "relay unreachable"; return -3; }
+
+  String req = method + " " + pathPrefix + path + " HTTP/1.1\r\n";
+  req += "Host: " + host + "\r\n";
+  req += "Connection: close\r\n";
+  req += "Content-Type: application/json\r\n";
+  req += "Content-Length: " + String(body.length()) + "\r\n\r\n";
+  req += body;
+  c.print(req);
+
+  String raw;
+  uint32_t deadline = millis() + 9000;
+  while (millis() < deadline && raw.length() < 24000) {
+    while (c.available()) {
+      int ch = c.read();
+      if (ch < 0) break;
+      raw += (char)ch;
+    }
+    if (!c.connected() && !c.available()) break;
+    delay(5);
   }
+  c.stop();
+
+  int code = -1;
+  int sp = raw.indexOf(' ');
+  if (raw.startsWith("HTTP/") && sp > 0) code = raw.substring(sp + 1, sp + 4).toInt();
+  int hdr = raw.indexOf("\r\n\r\n");
+  out = hdr >= 0 ? raw.substring(hdr + 4) : "";
   return code;
 }
 
