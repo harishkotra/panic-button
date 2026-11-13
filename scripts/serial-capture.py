@@ -44,13 +44,19 @@ def main() -> int:
     path = OUT / f"serial-{stamp}.log"
 
     chunks: list[str] = []
+    sink = path.open("w", encoding="utf-8")
 
     def pump(seconds: float) -> None:
         deadline = time.time() + seconds
         while time.time() < deadline:
             data = port.read(4096)
             if data:
-                chunks.append(data.decode("utf-8", "replace"))
+                text = data.decode("utf-8", "replace")
+                chunks.append(text)
+                # flush as we go: a long watch capture is only useful if the log
+                # can be read while the board is still being pressed
+                sink.write(text)
+                sink.flush()
 
     port = serial.Serial(args.port, args.baud, timeout=0.3)
     # do not reset the board on open; we want the boot banner it already printed
@@ -63,9 +69,9 @@ def main() -> int:
         port.flush()
         pump(per)
     port.close()
+    sink.close()
 
     text = "".join(chunks)
-    path.write_text(text, encoding="utf-8")
     print(f"wrote {path} ({len(text)} chars)")
     print(text[-2000:])
     return 0 if text.strip() else 1
