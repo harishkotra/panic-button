@@ -8,7 +8,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PIO="${PIO:-$HOME/Library/Python/3.12/bin/pio}"
+PIO="${PIO:-}"
+if [ -z "$PIO" ]; then
+  for c in "$HOME/.venvs/pio/bin/pio" "$HOME/Library/Python/3.12/bin/pio" \
+           "$HOME/Library/Python/3.9/bin/pio" "/opt/homebrew/bin/pio" "$(command -v pio || true)"; do
+    if [ -x "$c" ]; then PIO="$c"; break; fi
+  done
+fi
+if [ -z "$PIO" ]; then
+  echo "no pio found; set PIO=/path/to/pio" >&2
+  exit 127
+fi
 PORT="${PORT:-}"
 
 port_args=()
