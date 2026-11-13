@@ -577,9 +577,10 @@ static void printHelp() {
 // Cycle the plausible combinations, stamp the label on the panel, and let the
 // person watching read back whichever one appears.
 //
-// ST7735 is deliberately absent: switching to it from another panel wedges the
-// board mid-cycle (the log stops dead at that combo), and a 1.8" red-tab panel is
-// not what this build ships with. Revisit only with a confirmed ST7735 module.
+// ST7735 is deliberately absent: the sizes here cover the ILI9341 and ST7789
+// modules this build is likely to meet, and an ST7735 panel needs its own
+// offset/colstart tuning to show anything but a shifted mess. Add it only with a
+// confirmed ST7735 module in hand.
 static void probePanel() {
   const char *names[2] = {"ili9341", "st7789"};
   // each size entry is tried with both inversions, so 2 drivers x 4 sizes x 2 = 16
