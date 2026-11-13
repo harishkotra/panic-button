@@ -1,4 +1,4 @@
-// Panic Button — device firmware.
+// Panic Button - device firmware.
 //
 // The device holds an ed25519 key. It never touches funds. It asks the relay for
 // a challenge, signs it, and posts it back. The relay decides whether the escape
@@ -106,6 +106,7 @@ class Screen : public lgfx::LGFX_Device {
     b.pin_sclk = cfg.sclk;
     b.pin_mosi = cfg.mosi;
     b.pin_miso = -1;
+    b.pin_dc = cfg.dc;
     bus.config(b);
 
     lgfx::Panel_Device *p = &ili;
@@ -171,9 +172,9 @@ static void centre(const char *s, int y, int size, uint16_t color) {
 }
 
 // live values painted on the watch screen
-static String gPortfolio = "$—";
-static String gNet = "$—";
-static String gLegs = "—";
+static String gPortfolio = "$-";
+static String gNet = "$-";
+static String gLegs = "-";
 static String gRoute = "near";
 static String gNote = "";      // last error / hint, one line
 static String gReceipt = "";   // latched receipt prefix
@@ -205,7 +206,7 @@ static void drawReady() {
   if (gNote.length()) {
     text(gNote.c_str(), 16, 204, 1, C_AMBER);
   } else if (cfg.pinCover >= 0) {
-    text(digitalRead(cfg.pinCover) == HIGH ? "COVER OPEN — PRESS" : "COVER DOWN — LIFT IT", 16, 204, 1,
+    text(digitalRead(cfg.pinCover) == HIGH ? "COVER OPEN - PRESS" : "COVER DOWN - LIFT IT", 16, 204, 1,
          digitalRead(cfg.pinCover) == HIGH ? C_AMBER : C_DIM);
   } else {
     text("NO COVER SWITCH WIRED", 16, 204, 1, C_DIM);
@@ -234,7 +235,7 @@ static void drawSigning() {
 static void drawRefused(const String &why) {
   chrome("REFUSED", C_RED);
   centre("REFUSED", 56, 4, C_RED);
-  centre("402 · not signed off", 96, 1, C_RED);
+  centre("402 - not signed off", 96, 1, C_RED);
   tft.drawFastHLine(16, 116, tft.width() - 32, C_LINE);
   text("WHY", 16, 128, 1, C_DIM);
   centre(why.c_str(), 148, 1, C_INK);
@@ -403,8 +404,8 @@ static bool refreshQuotes() {
   int legs = 0;
   for (JsonVariant v : doc["legs"].as<JsonArray>()) { (void)v; legs++; }
   if (!legs) legs = doc["totals"]["legs"] | 0;
-  gPortfolio = value > 0 ? money(value) : "$—";
-  gNet = net > 0 ? money(net) : "$—";
+  gPortfolio = value > 0 ? money(value) : "$-";
+  gNet = net > 0 ? money(net) : "$-";
   gLegs = String(legs);
   gNote = "";
   return true;
@@ -465,7 +466,7 @@ static void fire() {
 
   if (code == 200) {
     gNet = money(net);
-    gReceipt = receipt.length() > 16 ? receipt.substring(0, 16) + "…" : receipt;
+    gReceipt = receipt.length() > 16 ? receipt.substring(0, 16) + "..." : receipt;
     state = ESCAPED;
     gFired = true;
     drawEscaped();
@@ -473,7 +474,7 @@ static void fire() {
   } else if (code == 402) {
     gCapUsed = (uint32_t)value;
     String why = res["error"] | "cap exceeded";
-    if (why.length() > 46) why = why.substring(0, 45) + "…";
+    if (why.length() > 46) why = why.substring(0, 45) + "...";
     state = REFUSED;
     gFired = true;
     drawRefused(why);
@@ -493,6 +494,7 @@ static bool plungerDown = false;
 static bool coverOpen = false;
 static uint32_t lastDebounce = 0;
 static uint32_t holdStart = 0;
+static bool rearmedThisHold = false;
 
 static bool readPlunger() {
   if (cfg.pinPlunger < 0) return false;
@@ -522,16 +524,18 @@ static void pollButtons() {
   if (p && !plungerDown) {
     plungerDown = true;
     holdStart = now;
+    rearmedThisHold = false;
   } else if (p && plungerDown && now - holdStart > 1500 && gFired) {
-    // long hold clears the latched verdict and re-arms
+    // long hold clears the latched verdict and re-arms; the same hold must not
+    // then fire on release, or a re-arm gesture would escape by accident
     gFired = false;
+    rearmedThisHold = true;
     state = coverOpen ? ARMED : READY;
     coverOpen ? drawArmed() : drawReady();
     Serial.println("re-armed");
   } else if (!p && plungerDown) {
     plungerDown = false;
-    uint32_t held = now - holdStart;
-    if (held > 2500) return;                    // long press handled above
+    if (rearmedThisHold) { rearmedThisHold = false; return; }
     if (gFired) return;                         // verdict on screen
     if (state == SIGNING) return;
     if (!coverOpen) {
@@ -548,7 +552,7 @@ static void pollButtons() {
 
 static void printHelp() {
   Serial.println();
-  Serial.println("panic button · serial provisioning");
+  Serial.println("panic button - serial provisioning");
   Serial.println("  set ssid <name>            wifi ssid");
   Serial.println("  set pass <secret>          wifi password");
   Serial.println("  set relay <url>            http://192.168.x.x:8787");
@@ -700,7 +704,7 @@ static void connectWifi() {
 void setup() {
   Serial.begin(115200);
   delay(400);
-  Serial.println("\npanic button · boot");
+  Serial.println("\npanic button - boot");
 
   loadCfg();
   initKeys();

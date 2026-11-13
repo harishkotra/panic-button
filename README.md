@@ -233,7 +233,7 @@ later.
   on chain. The authorisation path is real end to end, the money path stops at the quote. This is
   the honest boundary of a two day build.
 - The firmware is written, reviewed and compiled here: `./scripts/hw.sh build` produces
-  1,417,223 bytes of flash (42.4%) and 50,216 bytes of RAM (15.3%) on `espressif32@8.0.0`, with
+  1,417,219 bytes of flash (42.4%) and 50,224 bytes of RAM (15.3%) on `espressif32@8.0.0`, with
   LovyanGFX driving the panel. Flashing and the panel photograph happen on the desk with the board
   attached; the serial capture from `./scripts/hw.sh proof` is the artefact that lands in
   `docs/hardware/`. `ed25519` is vendored under `firmware/lib/ed25519` (orlp, CC0) because no
