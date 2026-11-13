@@ -14,13 +14,34 @@ serial console, so a wrong pin guess costs a `set pins ...` line, not a reflash.
 ## 1. Flash
 
 ```bash
-~/Library/Python/3.12/bin/pio run -d firmware -t upload
-~/Library/Python/3.12/bin/pio device monitor -d firmware
+./scripts/hw.sh ports      # prints the ports and which one is the ESP32
+./scripts/hw.sh flash      # add PORT=/dev/cu.usbserial-110 if autodetect picks wrong
+./scripts/hw.sh monitor
 ```
 
-If upload fails to find the port: hold BOOT, tap RESET, release BOOT, then rerun
-with `--upload-port /dev/cu.usbmodem*`. Some YD-ESP32-S3 boards need a USB-C
-cable in the port labelled `USB`, not `COM`.
+Two serial devices can appear on a Mac, and picking the wrong one wastes an hour:
+
+- `/dev/cu.usbserial-*` (VID `1a86`, CH343/CP210x bridge). **This is the ESP32-S3.**
+  esptool talks to it, the console prints on it, one cable does both.
+- `/dev/cu.usbmodem*`. On a desk with a Baochip Dabao in the same hub, this is the
+  **Dabao's** USB CDC, not the ESP32. Flashing it fails with
+  `Invalid head of packet (0xC3): Possible serial noise or corruption`, because the
+  board answers esptool's sync with Xous console output. Nothing is wrong with the
+  cable or the speed.
+
+The firmware keeps `Serial` on UART0 for exactly this reason
+(`-DARDUINO_USB_CDC_ON_BOOT=0`). With it set to 1 the console moves to the native
+USB port, and a single cable to the bridge flashes the board but prints nothing.
+
+If upload still fails: hold BOOT, tap RESET, release BOOT, rerun. Some
+YD-ESP32-S3 boards need the cable in the port labelled `USB`, not `COM`.
+Upload runs at 460800; 921600 fails on longer or hub-mediated cables.
+
+To capture the console to a file instead of scrolling it:
+
+```bash
+python3 scripts/serial-capture.py --port /dev/cu.usbserial-110 --cmd info --cmd key --cmd test
+```
 
 ## 2. Wire the screen (default pins)
 
