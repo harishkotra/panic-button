@@ -564,11 +564,58 @@ static void printHelp() {
   Serial.println("  set invert <0|1>           IPS panels are usually 1");
   Serial.println("  set buttons <plunger,cover>  -1 disables, cover -1 = no interlock");
   Serial.println("  test                       re-draw the screen with current config");
+  Serial.println("  probe                      cycle driver/invert/size, label each attempt on screen");
   Serial.println("  key                        print this device's public key");
   Serial.println("  status                     print config and wifi state");
   Serial.println("  panic                      fire without the button");
   Serial.println("  save / reboot / factory");
   Serial.println();
+}
+
+static void probePanel() {
+  // A blind panel is almost always a config mismatch, not dead hardware: the SPI
+  // bus is write-only, so `test` reports "init ok" even when nothing is wired.
+  // Cycle the plausible combinations, stamp the label on the panel, and let the
+  // person watching read back whichever one appears.
+  const char *names[3] = {"ili9341", "st7789", "st7735"};
+  const int ws[2] = {240, 128};
+  const int hs[2] = {320, 160};
+  const int bls[2] = {cfg.bl, -1};
+  const uint16_t bg[3] = {0xF800, 0x07E0, 0x001F};
+
+  int savedDrv = cfg.drv, savedW = cfg.w, savedH = cfg.h, savedInv = cfg.inv, savedBl = cfg.bl;
+  int savedRot = cfg.rot;
+  int n = 0, total = 3 * 2 * 2 * 2 * 2;
+
+  for (int d = 0; d < 3; d++)
+    for (int inv = 0; inv < 2; inv++)
+      for (int s = 0; s < 2; s++)
+        for (int b = 0; b < 2; b++) {
+          n++;
+          cfg.drv = d; cfg.inv = inv; cfg.w = ws[s]; cfg.h = hs[s]; cfg.bl = bls[b]; cfg.rot = 0;
+          tft.ready = false;
+          tft.configure();
+          Serial.printf("probe %d/%d %s %dx%d inv=%d bl=%d %s\n", n, total, names[d], ws[s], hs[s], inv,
+                        bls[b], tft.ready ? "init ok" : "init FAILED");
+          if (!tft.ready) continue;
+          int W = tft.width(), H = tft.height();
+          tft.fillScreen(bg[d]);
+          tft.fillRect(0, 0, W, H / 3, 0x0000);
+          tft.setTextColor(0xFFFF, 0x0000);
+          tft.setTextSize(3);
+          tft.drawString(String(n).c_str(), 6, 6);
+          tft.setTextSize(1);
+          tft.drawString(names[d], 6, H / 3 + 8);
+          tft.drawString(String(W) + "x" + String(H), 6, H / 3 + 22);
+          tft.drawString("inv" + String(inv), 6, H / 3 + 36);
+          tft.drawString(bls[b] < 0 ? "bl none" : ("bl" + String(bls[b])).c_str(), 6, H / 3 + 50);
+          delay(3000);
+        }
+
+  cfg.drv = savedDrv; cfg.w = savedW; cfg.h = savedH; cfg.inv = savedInv; cfg.bl = savedBl; cfg.rot = savedRot;
+  tft.ready = false;
+  tft.configure();
+  Serial.println("probe done, config restored");
 }
 
 static void printStatus() {
@@ -622,7 +669,9 @@ static void handleLine(String line) {
   else if (cmd == "factory") {
     prefs.begin("panic", false); prefs.clear(); prefs.end();
     Serial.println("cleared, rebooting"); delay(120); ESP.restart();
-  } else if (cmd == "panic") fire();
+  }
+  else if (cmd == "panic") fire();
+  else if (cmd == "probe") probePanel();
   else if (cmd == "test") {
     tft.ready = false;
     tft.configure();
