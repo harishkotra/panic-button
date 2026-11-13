@@ -82,6 +82,84 @@ npm run typecheck     # tsc, strict, zero errors
 
 ---
 
+## The physical device
+
+The repo ships firmware for a real ESP32-S3 and a real SPI screen. One binary,
+no per-board rebuild: the panel driver, the pin map, the WiFi credentials and
+the relay URL are set once over a serial console and stored in NVS.
+
+```bash
+./scripts/hw.sh ports                # find the board
+./scripts/hw.sh flash                # build + upload (~50s)
+./scripts/hw.sh monitor              # provisioning console at 115200
+./scripts/hw.sh proof 120            # capture 120s of serial to docs/hardware/
+```
+
+Then, in the monitor:
+
+```bash
+set ssid <wifi>
+set pass <wifi password>
+set relay http://<laptop-lan-ip>:8787
+set account intents.near
+test                 # paint colour bars: proves the panel and the pins agree
+save
+reboot
+```
+
+`test` paints red, green and blue bars plus the detected width and height. If
+the bars are right, the screen is right. If they are not, `set pins`, `set
+driver ili9341|st7789|st7735`, `set size 240 320` and `set rot` fix it without a
+reflash. Full wiring table and failure modes: [firmware/HARDWARE.md](firmware/HARDWARE.md).
+
+Two buttons, both active-low to GND: the plunger on GPIO0 (the BOOT button, so
+the board works before you solder) and a cover switch on GPIO5. With the cover
+down the device never contacts the relay — the panel says `GUARDED` and the
+serial says `panic: blocked by interlock`.
+
+Register the device's own key as the only key allowed to fire:
+
+```bash
+# take the base58 key printed by `key` on the serial console
+DEVICE_PUBKEY=<base58> CAP=1000 npm run seed
+```
+
+Now the browser console's key is rejected by the relay. The device holds an
+ed25519 keypair generated from the S3's hardware RNG on first boot and stored in
+NVS. The private key never leaves the chip and never appears on the laptop.
+
+### Proving it to someone who was not in the room
+
+Three artefacts, all checkable:
+
+1. the serial log from `./scripts/hw.sh proof`, which shows the challenge being
+   signed on the device and the relay's verdict coming back;
+2. a photograph of the panel showing `REFUSED` or `ESCAPED`;
+3. `GET /api/panics` on the relay, where the same record carries the
+   `devicePubKey` that only that chip knows.
+
+`./scripts/hw-simulate.mjs` replays the identical byte sequence (same UTF-8
+message, same base64 signature, same base58 key) from a laptop key, so the
+protocol is testable without hardware. It is labelled as a simulator on purpose:
+the private key lives on the machine, which is exactly what the device avoids.
+
+### Why quoting is mainnet, and what testnet would and would not give us
+
+1Click / NEAR Intents exposes one public API host, `1click.chaindefuser.com`.
+The testnet hosts do not resolve (`testnet.1click.chaindefuser.com` returns no
+connection), so there is no testnet quote feed to point at. That costs us
+nothing here, because the relay only ever asks for **dry** quotes: it signs an
+authorisation, it does not deposit. No funds move on any network, mainnet
+included.
+
+A NEAR **testnet** account is still the right place to put the on-chain half
+when we add it: the policy, the cap and the receipt log belong on
+`panic.testnet` where a real transaction costs nothing and is publicly
+inspectable. That needs a funded testnet account and key, which we deliberately
+do not keep in this repo.
+
+---
+
 ## What actually happens on a press
 
 ```mermaid
@@ -154,11 +232,12 @@ later.
 - Settlement is not executed. The relay asks for dry quotes, so no deposit is made and no funds move
   on chain. The authorisation path is real end to end, the money path stops at the quote. This is
   the honest boundary of a two day build.
-- The firmware is written, reviewed and compiled: `pio run -d firmware` builds clean on
-  `espressif32@8.0.0` for the YD-ESP32-S3, 1,248,021 bytes of flash (37.3%) and 47,056 bytes of RAM
-  (14.4%). It was not flashed here, because the board is on the other desk. `ed25519` is vendored
-  under `firmware/lib/ed25519` (orlp, CC0) since the registry package does not exist; compile
-  errors found that way are the reason the signing call now uses the derived private key.
+- The firmware is written, reviewed and compiled here: `./scripts/hw.sh build` produces
+  1,417,223 bytes of flash (42.4%) and 50,216 bytes of RAM (15.3%) on `espressif32@8.0.0`, with
+  LovyanGFX driving the panel. Flashing and the panel photograph happen on the desk with the board
+  attached; the serial capture from `./scripts/hw.sh proof` is the artefact that lands in
+  `docs/hardware/`. `ed25519` is vendored under `firmware/lib/ed25519` (orlp, CC0) because no
+  PlatformIO package exists for it.
 - **The video and screenshots show the browser console, not a physical device.** The device in them
   is HTML and CSS drawn at the S3's 320x240 proportions; the button, cover and screen states are the
   console's, and the three calls behind it are the real ones. No S3 was flashed for this build, so
@@ -256,11 +335,14 @@ web/
   style.css       365  paper, rules, screen, one red
   app.js          332  state, quotes, SSE, sign, panic
 firmware/src/
-  main.cpp        270  S3 firmware: challenge, sign, draw
+  main.cpp        739  S3 firmware: provisioning, ed25519, draw, buttons
+firmware/HARDWARE.md     wiring, provisioning, failure modes
+scripts/hw.sh      50  build / flash / monitor / serial proof capture
+scripts/hw-simulate.mjs 87  the same protocol from a laptop key (labelled simulator)
 firmware/lib/ed25519/  vendored signing, CC0
 ```
 
-2,505 lines of our own code, no bundler, no framework, no build step for the frontend. The only runtime dependencies
+3,116 lines of our own code, no bundler, no framework, no build step for the frontend. The only runtime dependencies
 are `fastify`, `tweetnacl`, `ws`, and two fastify plugins. A machine reviewer can read the whole
 system in one sitting, which is the point.
 

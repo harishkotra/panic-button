@@ -1,0 +1,427 @@
+/*----------------------------------------------------------------------------/
+  Lovyan GFX - Graphics library for embedded devices.
+
+Original Source:
+ https://github.com/lovyan03/LovyanGFX/
+
+Licence:
+ [FreeBSD](https://github.com/lovyan03/LovyanGFX/blob/master/license.txt)
+
+Author:
+ [lovyan03](https://twitter.com/lovyan03)
+
+Contributors:
+ [ciniml](https://github.com/ciniml)
+ [mongonta0716](https://github.com/mongonta0716)
+ [tobozo](https://github.com/tobozo)
+/----------------------------------------------------------------------------*/
+#pragma once
+
+#include "../../misc/DataWrapper.hpp"
+#include "../../misc/enum.hpp"
+#include "../../../utility/result.hpp"
+
+#include <stdint.h>
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <driver/gpio.h>
+#include <sdkconfig.h>
+#include <soc/soc.h>
+#include <soc/spi_reg.h>
+#if __has_include(<soc/i2s_reg.h>)
+ #include <soc/i2s_reg.h>
+#endif
+#if __has_include(<soc/gpio_reg.h>)
+ #include <soc/gpio_reg.h>
+#endif
+#if __has_include(<soc/gpio_periph.h>)
+ #include <soc/gpio_periph.h>
+#endif
+#include <soc/gpio_struct.h>
+#include <soc/gpio_sig_map.h>
+#include <esp_timer.h>
+
+#if __has_include(<esp_memory_utils.h>)
+ #include <esp_memory_utils.h>
+#elif __has_include(<soc/soc_memory_types.h>)
+ #include <soc/soc_memory_types.h>
+#elif __has_include(<soc/soc_memory_layout.h>)
+ #include <soc/soc_memory_layout.h>
+#else
+ __attribute((weak))
+ bool esp_ptr_dma_capable(const void*) { return false; }
+#endif
+
+// External RAM (PSRAM) can be a DMA source when the chip supports it and the cache writeback sync API exists
+#if __has_include(<soc/soc_caps.h>)
+ #include <soc/soc_caps.h>
+#endif
+// (chips with GDMA only; generations with the SPI's own DMA are untested and keep the CPU path.
+//  esp_cache.h exists in IDF 5.1, but its direction flags are 5.2 and later, so the flags are checked)
+#if defined ( SOC_PSRAM_DMA_CAPABLE ) && defined ( SOC_CACHE_WRITEBACK_SUPPORTED ) && defined ( SOC_GDMA_SUPPORTED ) && __has_include(<esp_cache.h>)
+ #include <esp_cache.h>
+ #if defined ( ESP_CACHE_MSYNC_FLAG_DIR_C2M )
+  #define LGFX_PSRAM_DMA_CAPABLE 1
+ #endif
+#endif
+
+#if defined ( ARDUINO )
+ #if __has_include (<SPI.h>)
+  #include <SPI.h>
+ #endif
+ #if __has_include (<Wire.h>)
+  #include <Wire.h>
+ #endif
+#endif
+
+#if defined ( CONFIG_IDF_TARGET_ESP32S3 )
+ /// ESP32-S3をターゲットにした際にREG_SPI_BASEの定義がおかしいため自前で設定
+ #if defined( REG_SPI_BASE )
+  #undef REG_SPI_BASE
+ #endif
+ #define REG_SPI_BASE(i)   (DR_REG_SPI1_BASE + (((i)>1) ? (((i)* 0x1000) + 0x20000) : (((~(i)) & 1)* 0x1000 )))
+#else
+ #if !defined ( REG_SPI_BASE )
+  #if defined ( DR_REG_SPI_BASE )
+   #define REG_SPI_BASE(i)    (DR_REG_SPI_BASE(i))  // the newer spi_reg.h carry the host indexed form under this name
+  #else
+   #define REG_SPI_BASE(i)    (DR_REG_SPI2_BASE)
+  #endif
+ #endif
+#endif
+
+/// ESP32-H2のspi_reg.hではSPIレジスタマクロがパラメータなしで定義されており
+/// DR_REG_SPI_BASEも未定義のため、パラメータ付きマクロとして再定義する
+#if defined ( CONFIG_IDF_TARGET_ESP32H2 )
+ #undef SPI_CMD_REG
+ #define SPI_CMD_REG(i)      (REG_SPI_BASE(i) + 0x0)
+ #undef SPI_CTRL_REG
+ #define SPI_CTRL_REG(i)     (REG_SPI_BASE(i) + 0x8)
+ #undef SPI_CLOCK_REG
+ #define SPI_CLOCK_REG(i)    (REG_SPI_BASE(i) + 0xc)
+ #undef SPI_USER_REG
+ #define SPI_USER_REG(i)     (REG_SPI_BASE(i) + 0x10)
+ #undef SPI_MISC_REG
+ #define SPI_MISC_REG(i)     (REG_SPI_BASE(i) + 0x20)
+ #undef SPI_DMA_CONF_REG
+ #define SPI_DMA_CONF_REG(i) (REG_SPI_BASE(i) + 0x30)
+ #undef SPI_W0_REG
+ #define SPI_W0_REG(i)       (REG_SPI_BASE(i) + 0x98)
+ // Used by SCT (Segmented-Configure-Transfer)
+ #undef SPI_USER1_REG
+ #define SPI_USER1_REG(i)    (REG_SPI_BASE(i) + 0x14)
+ #undef SPI_DMA_INT_CLR_REG
+ #define SPI_DMA_INT_CLR_REG(i) (REG_SPI_BASE(i) + 0x38)
+ #undef SPI_SLAVE_REG
+ #define SPI_SLAVE_REG(i)    (REG_SPI_BASE(i) + 0xe0)
+#endif
+
+#if defined ( ESP_IDF_VERSION_VAL )
+ #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+  #define LGFX_IDF_V5
+ #endif
+
+ #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
+  #ifndef LGFX_I2S_PORT_T_COMPAT
+   #define LGFX_I2S_PORT_T_COMPAT 1
+   typedef int i2s_port_t;
+  #endif
+ #endif
+
+ #if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
+  #if ! defined(CONFIG_IDF_TARGET_ESP32P4) // QSPI support for ESP32P4 still needs to be fixed
+   #define LGFX_USE_QSPI
+  #endif
+ #endif
+
+#endif
+
+namespace lgfx
+{
+ inline namespace v1
+ {
+//----------------------------------------------------------------------------
+
+  __attribute__ ((unused)) static inline unsigned long millis(void) { return (unsigned long) (esp_timer_get_time() / 1000ULL); }
+  __attribute__ ((unused)) static inline unsigned long micros(void) { return (unsigned long) (esp_timer_get_time()); }
+  __attribute__ ((unused)) static inline void delayMicroseconds(uint32_t us)
+  {
+#if defined ( LGFX_IDF_V5 )
+    esp_rom_delay_us(us);
+#else
+    ets_delay_us(us);
+#endif
+  }
+  __attribute__ ((unused)) static inline void delay(uint32_t ms)
+  {
+    uint32_t time = micros();
+    vTaskDelay( std::max<uint32_t>(2u, ms / portTICK_PERIOD_MS) - 1 );
+    if (ms != 0 && ms < portTICK_PERIOD_MS*8)
+    {
+      ms *= 1000;
+      time = micros() - time;
+      if (time < ms)
+      {
+        delayMicroseconds(ms - time);
+      }
+    }
+  }
+
+  static inline void* heap_alloc(      size_t length) { return heap_caps_malloc(length, MALLOC_CAP_8BIT);  }
+  static inline void* heap_alloc_dma(  size_t length) { return heap_caps_malloc((length + 3) & ~3, MALLOC_CAP_DMA);  }
+  static inline void* heap_alloc_psram(size_t length) { return heap_caps_malloc((length + 3) & ~3, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);  }
+  static inline void heap_free(void* buf) { heap_caps_free(buf); }
+#if defined ( LGFX_PSRAM_DMA_CAPABLE )
+  /// Whether DMA can reach this memory (internal DMA RAM or external RAM). External RAM needs dma_cache_sync before a transfer.
+  static inline bool heap_capable_dma(const void* ptr) { return esp_ptr_dma_capable(ptr) || esp_ptr_dma_ext_capable(ptr); }
+  /// Write the CPU cache back to memory before DMA reads a buffer in external RAM
+  /// (on chips where internal RAM is also cached, everything handed to DMA).
+  static inline void dma_cache_sync(const void* ptr, size_t len)
+  {
+ #if defined ( SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE ) && SOC_CACHE_INTERNAL_MEM_VIA_L1CACHE
+    esp_cache_msync(const_cast<void*>(ptr), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED);
+ #else
+    if (esp_ptr_external_ram(ptr)) { esp_cache_msync(const_cast<void*>(ptr), len, ESP_CACHE_MSYNC_FLAG_DIR_C2M | ESP_CACHE_MSYNC_FLAG_UNALIGNED); }
+ #endif
+  }
+#else
+  static inline bool heap_capable_dma(const void* ptr) { return esp_ptr_dma_capable(ptr); }
+  static inline void dma_cache_sync(const void*, size_t) {}
+#endif
+
+  /// 引数のポインタが組込RAMか判定する  true=内部RAM / false=外部RAMやROM等;
+  static inline bool isEmbeddedMemory(const void* ptr) { return esp_ptr_in_dram(ptr); }
+/*
+#if defined ( CONFIG_IDF_TARGET_ESP32S3 )
+  static inline bool isEmbeddedMemory(const void* ptr) { return (((uintptr_t)ptr & 0x3FF80000u) == 0x3FC80000u); }
+#else
+  static inline bool isEmbeddedMemory(const void* ptr) { return (((uintptr_t)ptr & 0x3FF80000u) == 0x3FF00000u); }
+#endif
+*/
+
+  enum pin_mode_t
+  { output
+  , input
+  , input_pullup
+  , input_pulldown
+  };
+
+  void pinMode(int_fast16_t pin, pin_mode_t mode);
+  inline void lgfxPinMode(int_fast16_t pin, pin_mode_t mode)
+  {
+    pinMode(pin, mode);
+  }
+
+  // The output set/clear and input registers are plain words on the older chips and
+  // unions on the newer ones; both are read through their address so the type does not
+  // matter. A second bank exists only where the pin count exceeds one word.
+#if !defined ( SOC_GPIO_PIN_COUNT ) || SOC_GPIO_PIN_COUNT > 32
+  static inline volatile uint32_t* get_gpio_hi_reg(int_fast8_t pin) { return (volatile uint32_t*)((pin & 32) ? (volatile void*)&GPIO.out1_w1ts : (volatile void*)&GPIO.out_w1ts); }
+  static inline volatile uint32_t* get_gpio_lo_reg(int_fast8_t pin) { return (volatile uint32_t*)((pin & 32) ? (volatile void*)&GPIO.out1_w1tc : (volatile void*)&GPIO.out_w1tc); }
+  static inline bool gpio_in(int_fast8_t pin) { return *(volatile uint32_t*)((pin & 32) ? (volatile void*)&GPIO.in1 : (volatile void*)&GPIO.in) & (1 << (pin & 31)); }
+#else
+  static inline volatile uint32_t* get_gpio_hi_reg(int_fast8_t pin) { return (volatile uint32_t*)&GPIO.out_w1ts; }
+  static inline volatile uint32_t* get_gpio_lo_reg(int_fast8_t pin) { return (volatile uint32_t*)&GPIO.out_w1tc; }
+  static inline bool gpio_in(int_fast8_t pin) { return *(volatile uint32_t*)&GPIO.in & (1 << (pin & 31)); }
+#endif
+  static inline void gpio_hi(int_fast8_t pin) { if (pin >= 0) *get_gpio_hi_reg(pin) = 1 << (pin & 31); } // ESP_LOGI("LGFX", "gpio_hi: %d", pin); }
+  static inline void gpio_lo(int_fast8_t pin) { if (pin >= 0) *get_gpio_lo_reg(pin) = 1 << (pin & 31); } // ESP_LOGI("LGFX", "gpio_lo: %d", pin); }
+
+  uint32_t getApbFrequency(void);
+  uint32_t getSpiClockFrequency(int spi_host);
+  uint32_t FreqToClockDiv(uint32_t fapb, uint32_t hz);
+
+  /// for I2S and LCD_CAM peripheral clock
+  void calcClockDiv(uint32_t* div_a, uint32_t* div_b, uint32_t* div_n, uint32_t* clkcnt, uint32_t baseClock, uint32_t targetFreq);
+
+  // esp_efuse_get_pkg_ver
+  uint32_t get_pkg_ver(void);
+
+  // Find GDMA assigned to a peripheral;
+  int32_t search_dma_out_ch(int peripheral_select);
+  int32_t search_dma_in_ch(int peripheral_select);
+
+  void debug_memory_dump(const void* src, size_t len);
+
+//----------------------------------------------------------------------------
+
+#if defined (ARDUINO)
+ #if defined (_SD_H_)
+   #define LGFX_FILESYSTEM_SD SD
+ #endif
+ #if defined (_SDMMC_H_)
+   #define LGFX_FILESYSTEM_SDMMC SDMMC
+ #endif
+ #if defined (_LITTLEFS_H_) || defined (__LITTLEFS_H) || defined (_LiffleFS_H_)
+   #define LGFX_FILESYSTEM_LITTLEFS LittleFS
+ #endif
+ #if defined (_SPIFFS_H_)
+   #define LGFX_FILESYSTEM_SPIFFS SPIFFS
+ #endif
+ #if defined (_FFAT_H_)
+   #define LGFX_FILESYSTEM_FFAT FFat
+ #endif
+
+ #if defined (FS_H) \
+  || defined (LGFX_FILESYSTEM_SD) \
+  || defined (LGFX_FILESYSTEM_SDMMC) \
+  || defined (LGFX_FILESYSTEM_LITTLEFS) \
+  || defined (LGFX_FILESYSTEM_SPIFFS) \
+  || defined (LGFX_FILESYSTEM_FFAT)
+
+  template <>
+  struct DataWrapperT<fs::File> : public DataWrapper {
+    DataWrapperT(fs::File* fp = nullptr) : DataWrapper{}, _fp { fp } {
+      need_transaction = true;
+    }
+    int read(uint8_t *buf, uint32_t len) override { return _fp->read(buf, len); }
+    void skip(int32_t offset) override { _fp->seek(offset, fs::SeekCur); }
+    bool seek(uint32_t offset) override { return _fp->seek(offset, fs::SeekSet); }
+    bool seek(uint32_t offset, fs::SeekMode mode) { return _fp->seek(offset, mode); }
+    void close(void) override { if (_fp) _fp->close(); }
+    int32_t tell(void) override { return _fp->position(); }
+protected:
+    fs::File *_fp;
+  };
+
+  template <>
+  struct DataWrapperT<fs::FS> : public DataWrapperT<fs::File> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::File> { fp }, _fs { fs } {
+#if defined (LGFX_FILESYSTEM_SD)
+      need_transaction = (fs == &LGFX_FILESYSTEM_SD);
+#endif
+    }
+    bool open(const char* path) override
+    {
+      _file = _fs->open(path, "r");
+      DataWrapperT<fs::File>::_fp = &_file;
+      return _file;
+    }
+
+protected:
+    fs::FS* _fs;
+    fs::File _file;
+  };
+
+  #if defined (LGFX_FILESYSTEM_SD)
+  template <>
+  struct DataWrapperT<fs::SDFS> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+  #if defined (LGFX_FILESYSTEM_SDMMC)
+  template <>
+  struct DataWrapperT<fs::SDMMCFS> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+  #if defined (LGFX_FILESYSTEM_SPIFFS)
+  template <>
+  struct DataWrapperT<fs::SPIFFSFS> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+  #if defined (LGFX_FILESYSTEM_LITTLEFS)
+  template <>
+  struct DataWrapperT<fs::LittleFSFS> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+  #if defined (LGFX_FILESYSTEM_FFAT)
+  template <>
+  struct DataWrapperT<fs::F_Fat> : public DataWrapperT<fs::FS> {
+    DataWrapperT(fs::FS* fs, fs::File* fp = nullptr) : DataWrapperT<fs::FS>(fs, fp) {}
+  };
+  #endif
+ #endif
+#endif
+
+//----------------------------------------------------------------------------
+
+  namespace gpio
+  {
+    // Return a pad owned by the low-power domain to the normal GPIO domain.
+    // This is a no-op on targets without independently routed LP GPIOs.
+    void release_lp_pad(int pin_num);
+
+    class pin_backup_t
+    {
+    public:
+      pin_backup_t(int pin_num);
+      pin_backup_t(void) : pin_backup_t( -1 ) {};
+      void setPin(int pin_num) { _pin_num = pin_num; }
+      int getPin(void) const { return _pin_num; }
+      void backup(void);
+      bool matches_current(void) const;
+      void restore(void);
+
+    private:
+      uint32_t _io_mux_gpio_reg;
+      uint32_t _gpio_pin_reg;
+      uint32_t _gpio_func_out_reg;
+      uint32_t _gpio_func_in_reg;
+      int16_t _in_func_num = -1;
+      int8_t _pin_num = -1; //GPIO_NUM_NC
+      bool _gpio_enable;
+      bool _gpio_out;
+    };
+
+    enum command_t : uint8_t
+    {
+      command_end = 0,              // コマンド終了
+      command_read,                 // [1]=GPIO番号 1bit読みとる
+      command_write_low,            // [1]=GPIO番号 LOW出力
+      command_write_high,           // [1]=GPIO番号 HIGH出力
+      command_mode_output,          // [1]=GPIO番号 outputモードに変更する
+      command_mode_input,           // [1]=GPIO番号 inputモードに変更する
+      command_mode_input_pulldown,  // [1]=GPIO番号 input pulldownモードに変更する
+      command_mode_input_pullup,    // [1]=GPIO番号 input pullupモードに変更する
+      command_delay,                // [1]=停止する時間[ミリ秒]
+      command_delay_usec,           // [1]=停止する時間[マイクロ秒]
+    };
+    bool command(command_t cmd, uint8_t pin);
+    uint32_t command(const uint8_t* cmd_list);
+  }
+
+//----------------------------------------------------------------------------
+
+  namespace spi
+  {
+    cpp::result<void, error_t> init(int spi_host, int spi_sclk, int spi_miso, int spi_mosi, int dma_channel);
+#if defined LGFX_USE_QSPI
+    cpp::result<void, error_t> initQuad(int spi_host, int spi_sclk, int spi_io0, int spi_io1, int spi_io2, int spi_io3, int dma_channel);
+#endif
+    void beginTransaction(int spi_host);
+  }
+
+//----------------------------------------------------------------------------
+
+  namespace i2c
+  {
+    cpp::result<void, error_t> setPins(int i2c_port, int pin_sda, int pin_scl);
+    cpp::result<void, error_t> init(int i2c_port);
+    cpp::result<int, error_t> getPinSDA(int i2c_port);
+    cpp::result<int, error_t> getPinSCL(int i2c_port);
+    bool isInitialized(int i2c_port); // true once init() succeeded and release() has not been called since
+    bool busy(int i2c_port);
+    void wait(int i2c_port);
+
+    struct i2c_temporary_switcher_t
+    {
+      i2c_temporary_switcher_t(int i2c_port, int pin_sda, int pin_scl);
+      void restore(void);
+    protected:
+#if defined ( ARDUINO ) && __has_include (<Wire.h>)
+      TwoWire* _twowire = nullptr;
+#endif
+      gpio::pin_backup_t _pin_backup[4];
+      int _i2c_port = 0;
+      bool _backuped = false;
+      bool _need_reinit = false;
+    };
+  }
+
+//----------------------------------------------------------------------------
+ }
+}

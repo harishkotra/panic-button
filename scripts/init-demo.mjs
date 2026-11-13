@@ -41,7 +41,12 @@ function loadOrCreateKey() {
   return out;
 }
 
-const key = loadOrCreateKey();
+const key = process.env.DEVICE_PUBKEY
+  ? { publicKey: process.env.DEVICE_PUBKEY.trim(), secretKey: "" }
+  : loadOrCreateKey();
+if (process.env.DEVICE_PUBKEY) {
+  console.log("registering hardware device key:", key.publicKey, "(no secret on this machine)");
+}
 
 const portfolio = await (await fetch(`${RELAY}/api/portfolio?account=${ACCOUNT}`)).json();
 const b = portfolio.balances ?? {};

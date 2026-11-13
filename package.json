@@ -9,7 +9,8 @@
     "demo": "node --import tsx scripts/panic.mjs",
     "verify": "node scripts/verify.mjs",
     "start": "node --import tsx server/src/index.ts",
-    "seed": "node scripts/init-demo.mjs"
+    "seed": "node scripts/init-demo.mjs",
+    "hw": "bash scripts/hw.sh"
   },
   "keywords": [],
   "author": "",

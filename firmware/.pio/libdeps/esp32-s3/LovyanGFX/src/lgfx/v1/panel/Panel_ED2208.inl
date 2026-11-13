@@ -1,0 +1,539 @@
+/*----------------------------------------------------------------------------/
+  Lovyan GFX - Graphics library for embedded devices.
+
+Original Source:
+ https://github.com/lovyan03/LovyanGFX/
+
+Licence:
+ [FreeBSD](https://github.com/lovyan03/LovyanGFX/blob/master/license.txt)
+
+Author:
+ [lovyan03](https://twitter.com/lovyan03)
+/----------------------------------------------------------------------------*/
+#ifndef LGFX_V1_IMPLEMENTATION
+#error "Panel_ED2208.inl is part of lgfx_v1.cpp and is not meant to be included on its own"
+#endif
+#include "Panel_ED2208.hpp"
+#include "lgfx/v1/Bus.hpp"
+#include "lgfx/v1/platforms/common.hpp"
+#include "lgfx/v1/misc/pixelcopy.hpp"
+#include "lgfx/v1/misc/colortype.hpp"
+
+#include <cmath>
+
+#ifdef min
+#undef min
+#endif
+
+namespace lgfx
+{
+ inline namespace v1
+ {
+//----------------------------------------------------------------------------
+
+  // EPD color indices (panel native 4bpp values)
+  static constexpr uint8_t EPD_BLACK  = 0x0;
+  static constexpr uint8_t EPD_WHITE  = 0x1;
+  static constexpr uint8_t EPD_YELLOW = 0x2;
+  static constexpr uint8_t EPD_RED    = 0x3;
+  static constexpr uint8_t EPD_BLUE   = 0x5;
+  static constexpr uint8_t EPD_GREEN  = 0x6;
+  // 0x4 and 0x7 are unused
+
+  static constexpr uint8_t EPD_PALETTE_COUNT = 6;
+
+  // Ideal RGB palette for nearest-color lookup.
+  struct palette_t { uint8_t r, g, b, idx; };
+
+  static constexpr palette_t epd_palette[] = {
+    {   0,   0,   0, EPD_BLACK  },
+    { 255, 255, 255, EPD_WHITE  },
+    { 255, 243,  56, EPD_YELLOW },
+    { 191,   0,   0, EPD_RED    },
+    { 100,  64, 255, EPD_BLUE   },
+    {  67, 138,  28, EPD_GREEN  },
+  };
+
+  static constexpr uint8_t bayer256[256] = {
+      0, 192,  48, 240,  12, 204,  60, 252,   3, 195,  51, 243,  15, 207,  63, 255,
+    128,  64, 176, 112, 140,  76, 188, 124, 131,  67, 179, 115, 143,  79, 191, 127,
+     32, 224,  16, 208,  44, 236,  28, 220,  35, 227,  19, 211,  47, 239,  31, 223,
+    160,  96, 144,  80, 172, 108, 156,  92, 163,  99, 147,  83, 175, 111, 159,  95,
+      8, 200,  56, 248,   4, 196,  52, 244,  11, 203,  59, 251,   7, 199,  55, 247,
+    136,  72, 184, 120, 132,  68, 180, 116, 139,  75, 187, 123, 135,  71, 183, 119,
+     40, 232,  24, 216,  36, 228,  20, 212,  43, 235,  27, 219,  39, 231,  23, 215,
+    168, 104, 152,  88, 164, 100, 148,  84, 171, 107, 155,  91, 167, 103, 151,  87,
+      2, 194,  50, 242,  14, 206,  62, 254,   1, 193,  49, 241,  13, 205,  61, 253,
+    130,  66, 178, 114, 142,  78, 190, 126, 129,  65, 177, 113, 141,  77, 189, 125,
+     34, 226,  18, 210,  46, 238,  30, 222,  33, 225,  17, 209,  45, 237,  29, 221,
+    162,  98, 146,  82, 174, 110, 158,  94, 161,  97, 145,  81, 173, 109, 157,  93,
+     10, 202,  58, 250,   6, 198,  54, 246,   9, 201,  57, 249,   5, 197,  53, 245,
+    138,  74, 186, 122, 134,  70, 182, 118, 137,  73, 185, 121, 133,  69, 181, 117,
+     42, 234,  26, 218,  38, 230,  22, 214,  41, 233,  25, 217,  37, 229,  21, 213,
+    170, 106, 154,  90, 166, 102, 150,  86, 169, 105, 153,  89, 165, 101, 149,  85,
+  };
+
+  static uint8_t _rgb_to_epd_color(int32_t r, int32_t g, int32_t b, const palette_t* palette)
+  {
+    uint32_t min_dist = UINT32_MAX;
+    uint8_t best = EPD_WHITE;
+    for (size_t i = 0; i < EPD_PALETTE_COUNT; ++i) {
+      const auto& p = palette[i];
+      int32_t dr = r - (int32_t)p.r;
+      int32_t dg = g - (int32_t)p.g;
+      int32_t db = b - (int32_t)p.b;
+      uint32_t dist = dr * dr + dg * dg + db * db;
+      if (dist < min_dist) {
+        min_dist = dist;
+        best = p.idx;
+      }
+    }
+    return best;
+  }
+
+  
+  static uint8_t _rgb_to_epd_color_pair(int32_t r0, int32_t g0, int32_t b0,
+                                       int32_t r1, int32_t g1, int32_t b1, const palette_t* palette)
+  {
+    uint32_t min_dist = UINT32_MAX;
+    uint8_t best = EPD_WHITE;
+
+    int32_t r0array[EPD_PALETTE_COUNT];
+    int32_t g0array[EPD_PALETTE_COUNT];
+    int32_t b0array[EPD_PALETTE_COUNT];
+    int32_t r1array[EPD_PALETTE_COUNT];
+    int32_t g1array[EPD_PALETTE_COUNT];
+    int32_t b1array[EPD_PALETTE_COUNT];
+    // Per-palette squared individual error for each pixel. Added to the block
+    // metric to keep hue information when palette pairs tie on block/brightness
+    // terms (e.g. prevents dusty-orange input collapsing to black+white).
+    int32_t indiv0[EPD_PALETTE_COUNT];
+    int32_t indiv1[EPD_PALETTE_COUNT];
+    for (uint_fast8_t index = 0; index < EPD_PALETTE_COUNT; ++index) {
+      const auto& p = palette[index];
+      int32_t dr0 = r0 - (int32_t)p.r;
+      int32_t dg0 = g0 - (int32_t)p.g;
+      int32_t db0 = b0 - (int32_t)p.b;
+      r0array[index] = dr0;
+      g0array[index] = dg0;
+      b0array[index] = db0;
+      indiv0[index] = (dr0 * dr0 + dg0 * dg0 + db0 * db0);
+
+      int32_t dr1 = r1 - (int32_t)p.r;
+      int32_t dg1 = g1 - (int32_t)p.g;
+      int32_t db1 = b1 - (int32_t)p.b;
+      r1array[index] = dr1;
+      g1array[index] = dg1;
+      b1array[index] = db1;
+      indiv1[index] = (dr1 * dr1 + dg1 * dg1 + db1 * db1);
+    }
+
+    for (uint_fast8_t i = 0; i < EPD_PALETTE_COUNT; ++i) {
+      for (uint_fast8_t j = 0; j < EPD_PALETTE_COUNT; ++j) {
+        int32_t dr = r0array[i] + r1array[j];
+        int32_t dg = g0array[i] + g1array[j];
+        int32_t db = b0array[i] + b1array[j];
+        uint32_t dist = ((uint32_t)(dr * dr + dg * dg + db * db))
+                      + ((uint32_t)(indiv0[i] + indiv1[j]));
+        if (dist < min_dist) {
+          min_dist = dist;
+          best = palette[i].idx << 4 | palette[j].idx;
+        }
+      }
+    }
+    return best;
+  }
+
+  static void _dither_row_none(const lgfx::bgr888_t* src, uint8_t* dst, uint_fast16_t w, uint_fast16_t /*x0*/, uint_fast16_t /*y*/, uint8_t /*dither*/ )
+  {
+    auto palette = epd_palette;
+    for (uint_fast16_t x = 0; x < w; x += 2) {
+      uint8_t c0 = _rgb_to_epd_color(src[x].r, src[x].g, src[x].b, palette);
+      uint8_t c1 = EPD_WHITE;
+      if (x + 1 < w) {
+        c1 = _rgb_to_epd_color(src[x + 1].r, src[x + 1].g, src[x + 1].b, palette);
+      }
+      dst[x >> 1] = (c0 << 4) | c1;
+    }
+  }
+
+  // --- Dither: Bayer RGB (uniform bias on all channels) ---
+
+  static void _dither_row_bayer_simple_pair(const lgfx::bgr888_t* src, uint8_t* dst, uint_fast16_t w, uint_fast16_t x0, uint_fast16_t y, uint8_t dither)
+  {
+    auto palette = epd_palette;
+    auto row = &bayer256[( y    & 15) << 4];
+    for (uint_fast16_t x = 0; x < w; x += 2) {
+      int32_t bias = row[(x0 + x) & 15];
+      bias = bias * 2 - 255;
+      bias = bias * dither >> 8;
+      int32_t r0 = (int32_t)src[x].r + bias;
+      int32_t g0 = (int32_t)src[x].g + bias;
+      int32_t b0 = (int32_t)src[x].b + bias;
+      int32_t r1 = 0;
+      int32_t g1 = 0;
+      int32_t b1 = 0;
+      if (x + 1 < w) {
+        bias = row[(x0 + x + 1) & 15];
+        bias = bias * 2 - 255;
+        bias = bias * dither >> 8;
+        r1 = (int32_t)src[x + 1].r + bias;
+        g1 = (int32_t)src[x + 1].g + bias;
+        b1 = (int32_t)src[x + 1].b + bias;
+      }
+      dst[x >> 1] = _rgb_to_epd_color_pair(r0, g0, b0, r1, g1, b1, palette);
+    }
+  }
+
+  static void _dither_row_rgb_pair(const lgfx::bgr888_t* src, uint8_t* dst, uint_fast16_t w, uint_fast16_t x0, uint_fast16_t y, uint8_t dither)
+  {
+    auto palette = epd_palette;
+
+    const int32_t x_step = 127 * 29;
+    const int32_t y_step = 129 * 48;
+
+    static constexpr size_t step_value = 129*127;
+    static constexpr size_t step_diff = step_value / 3;
+
+    // Start from where a full row would be at x0, so a window dithers like the full screen.
+    int32_t bias_base = (y * y_step + step_value - x0 * x_step % step_value) % step_value;
+    // Original scale was /4.0f; keep that at dither_level=255 and scale down linearly.
+    int32_t r0 = 0, g0 = 0, b0 = 0;
+    for (uint_fast16_t x = 0; x <= w; x ++) {
+      int32_t r = 128;
+      int32_t g = 128;
+      int32_t b = 128;
+      if (x < w) {
+        r = src[x].r;
+        g = src[x].g;
+        b = src[x].b;
+      }
+      bias_base -= x_step;
+      if (bias_base < 0) bias_base += step_value;
+      int32_t bias_r = bias_base;
+      int32_t bias_g = bias_base - step_diff;
+      if (bias_g < 0) bias_g += step_value;
+      int32_t bias_b = bias_g - step_diff;
+      if (bias_b < 0) bias_b += step_value;
+      bias_b = bias_b * 2 - (step_value - 1);
+      bias_g = bias_g * 2 - (step_value - 1);
+      bias_r = bias_r * 2 - (step_value - 1);
+      int32_t bias = (bias_r + bias_g + bias_b);
+      bias = bias * dither >> 16;
+      bias_r = bias_r * dither >> 16;
+      bias_g = bias_g * dither >> 16;
+      bias_b = bias_b * dither >> 16;
+      r += bias + bias_r;
+      g += bias + bias_g;
+      b += bias + bias_b;
+      if (x & 1) {
+        dst[x >> 1] = _rgb_to_epd_color_pair(r0, g0, b0, r, g, b, palette);
+      } else {
+        r0 = r;
+        g0 = g;
+        b0 = b;
+      }
+    }
+  }
+
+//---------------------------------------------------------------
+
+  // --- Panel implementation ---
+
+  Panel_ED2208::Panel_ED2208(void)
+  {
+    _cfg.dummy_read_bits = 0;
+    _epd_mode = epd_mode_t::epd_quality;
+  }
+
+  Panel_ED2208::~Panel_ED2208(void)
+  {
+    if (_lines_buffer) {
+      heap_free(_lines_buffer);
+      _lines_buffer = nullptr;
+    }
+    if (_framebuffer) {
+      heap_free(_framebuffer);
+      _framebuffer = nullptr;
+    }
+  }
+
+  color_depth_t Panel_ED2208::setColorDepth(color_depth_t depth)
+  {
+    (void)depth;
+    _write_depth = color_depth_t::rgb888_3Byte;
+    _read_depth = color_depth_t::rgb888_3Byte;
+    return color_depth_t::rgb888_3Byte;
+  }
+
+  void Panel_ED2208::_send_command(uint8_t cmd)
+  {
+    _bus->writeCommand(cmd, 8);
+  }
+
+  void Panel_ED2208::_send_data(uint8_t data)
+  {
+    _bus->writeData(data, 8);
+  }
+
+  // Waits up to `timeout` ms for the controller to be idle. BUSY stays low for the whole
+  // AUTO sequence (no short high between its steps was seen at 0.1 ms sampling), so the
+  // first high ends the wait.
+  bool Panel_ED2208::_wait_busy(uint32_t timeout)
+  {
+    _bus->wait();
+    uint32_t start_time = millis();
+    while (displayBusy())
+    {
+      if (millis() - start_time >= timeout) { return false; }
+      lgfx::delay(10);
+    }
+    return true;
+  }
+
+  void Panel_ED2208::_init_sequence(void)
+  {
+    _bus->beginTransaction();
+    cs_control(false);
+
+    for (uint8_t i = 0; auto cmds = getInitCommands(i); i++)
+    {
+      _wait_busy();
+      command_list(cmds);
+    }
+
+    _wait_busy();
+    _send_command(0x61);    // Resolution
+    _send_data((_cfg.panel_width >> 8) & 0xFF);
+    _send_data(_cfg.panel_width & 0xFF);
+    _send_data((_cfg.panel_height >> 8) & 0xFF);
+    _send_data(_cfg.panel_height & 0xFF);
+
+    _bus->wait();
+    cs_control(true);
+    _bus->endTransaction();
+  }
+
+  // Starts a refresh and returns without waiting for it (15 to 30 s; BUSY is low meanwhile).
+  // The AUTO command runs POWER_ON -> DISPLAY_REFRESH -> POWER_OFF -> DEEP_SLEEP in the
+  // controller, so the panel is powered off when it ends even if nobody polls BUSY.
+  // The next display() or setSleep(false) wakes it with a reset.
+  void Panel_ED2208::_start_refresh(void)
+  {
+    _bus->beginTransaction();
+    cs_control(false);
+
+    _send_command(0x06);    // Booster soft start
+    _send_data(0x6F);
+    _send_data(0x1F);
+    _send_data(0x17);
+    _send_data(0x27);
+
+    // Without a reset pin the controller could not be woken again: stop at POWER_OFF.
+    bool sleep = _cfg.pin_rst >= 0;
+    _send_command(0x17);    // AUTO
+    _send_data(sleep ? 0xA7 : 0xA5);  // POWER_ON, DISPLAY_REFRESH, POWER_OFF[, DEEP_SLEEP]
+
+    _bus->wait();
+    cs_control(true);
+    _bus->endTransaction();
+    _asleep = sleep;
+    _refresh_started = true;
+    _refresh_ms = millis();
+
+    // Return once BUSY has gone low, so that a waitDisplay() or sleep() right after
+    // display() sees the refresh.
+    if (_cfg.pin_busy >= 0)
+    {
+      uint32_t start = millis();
+      while (gpio_in(_cfg.pin_busy) && millis() - start < 50) { lgfx::delay(1); }
+    }
+  }
+
+  bool Panel_ED2208::init(bool /*use_reset*/)
+  {
+    pinMode(_cfg.pin_busy, pin_mode_t::input_pullup);
+
+    setColorDepth(color_depth_t::rgb888_3Byte);
+
+    uint32_t pw = _cfg.panel_width;
+    uint32_t ph = _cfg.panel_height;
+    uint32_t bytes_per_line = pw * sizeof(bgr888_t);
+
+    if (_framebuffer) { heap_free(_framebuffer); _framebuffer = nullptr; }
+    if (_lines_buffer) { heap_free(_lines_buffer); _lines_buffer = nullptr; }
+
+    _framebuffer = static_cast<uint8_t*>(heap_alloc_psram(bytes_per_line * ph));
+    if (!_framebuffer) { return false; }
+
+    _lines_buffer = static_cast<uint8_t**>(heap_alloc(ph * sizeof(uint8_t*)));
+    if (!_lines_buffer) { heap_free(_framebuffer); _framebuffer = nullptr; return false; }
+
+    for (uint32_t y = 0; y < ph; ++y) {
+      _lines_buffer[y] = _framebuffer + y * bytes_per_line;
+    }
+
+    memset(_framebuffer, 0xFF, bytes_per_line * ph);
+
+    if (!Panel_FrameBufferBase::init(false))
+    {
+      return false;
+    }
+
+    _after_wake();
+    setRotation(_rotation);
+
+    return true;
+  }
+
+  // The controller is always reset before the init sequence. It wakes it from deep sleep
+  // (left by the previous refresh, or by a previous program: a command sent to a sleeping
+  // controller leaves BUSY low and every wait times out), and after MCU resets in the middle
+  // of a refresh BUSY was seen to stay low for over 100 s per refresh. The reset keeps the
+  // image on the panel. A refresh started by this instance is waited for first.
+  void Panel_ED2208::_after_wake(void)
+  {
+    if (_refresh_started) { _wait_busy(REFRESH_TIMEOUT_MS); }
+    _refresh_started = false;
+    _asleep = false;
+    rst_control(false);
+    lgfx::delay(20);
+    rst_control(true);
+    lgfx::delay(10);
+    _init_sequence();
+  }
+
+  void Panel_ED2208::waitDisplay(void)
+  {
+    _wait_busy(REFRESH_TIMEOUT_MS);
+  }
+
+  bool Panel_ED2208::displayBusy(void)
+  {
+    if (_cfg.pin_busy >= 0) { return !gpio_in(_cfg.pin_busy); }
+    if (_refresh_started && millis() - _refresh_ms >= REFRESH_TIME_NO_BUSY_MS) { _refresh_started = false; }
+    return _refresh_started;
+  }
+
+  void Panel_ED2208::display(uint_fast16_t x, uint_fast16_t y, uint_fast16_t w, uint_fast16_t h)
+  {
+    if (0 < w && 0 < h)
+    {
+      uint_fast8_t r = _internal_rotation;
+      if (r)
+      {
+        if ((1u << r) & 0b10010110) { y = _height - (y + h); }
+        if (r & 2)                  { x = _width  - (x + w); }
+        if (r & 1) { std::swap(x, y);  std::swap(w, h); }
+      }
+      _range_mod.left   = std::min<int_fast16_t>(_range_mod.left  , x        );
+      _range_mod.right  = std::max<int_fast16_t>(_range_mod.right , x + w - 1);
+      _range_mod.top    = std::min<int_fast16_t>(_range_mod.top   , y        );
+      _range_mod.bottom = std::max<int_fast16_t>(_range_mod.bottom, y + h - 1);
+    }
+    _range_mod.left   = std::max<int_fast16_t>(_range_mod.left  , 0);
+    _range_mod.right  = std::min<int_fast16_t>(_range_mod.right , _cfg.panel_width  - 1);
+    _range_mod.top    = std::max<int_fast16_t>(_range_mod.top   , 0);
+    _range_mod.bottom = std::min<int_fast16_t>(_range_mod.bottom, _cfg.panel_height - 1);
+    if (!_range_mod.empty()) {
+      // Wait for the previous refresh (in _after_wake() when the controller sleeps).
+      // A refresh never takes this long: on a timeout the controller is taken as stuck,
+      // and the reset recovers it.
+      if (_asleep) { _after_wake(); }
+      else if (!_wait_busy(REFRESH_TIMEOUT_MS) && _cfg.pin_rst < 0) { return; }  // no reset to recover with: keep _range_mod
+      if (!_exec_transfer()) { return; }   // keep _range_mod for the next display()
+      _start_refresh();
+      _range_mod.top = INT16_MAX;
+      _range_mod.left = INT16_MAX;
+      _range_mod.right = 0;
+      _range_mod.bottom = 0;
+    }
+  }
+
+  // --- Transfer ---
+
+  bool Panel_ED2208::_exec_transfer(void)
+  {
+    // Only the modified rectangle is sent and refreshed (partial window). The refresh takes
+    // as long as a full one, but the rest of the panel keeps its image instead of flashing.
+    // Both window ends are inclusive. The x range is widened to multiples of 8: from an
+    // unaligned start the controller places the data shifted.
+    // _range_mod is within the panel (display() clips it).
+    int_fast16_t xs = _range_mod.left & ~7;
+    int_fast16_t xe = std::min<int_fast16_t>(_cfg.panel_width - 1, _range_mod.right | 7);
+    int_fast16_t ys = _range_mod.top;
+    int_fast16_t ye = _range_mod.bottom;
+    uint_fast16_t w = xe - xs + 1;
+    uint32_t row_bytes = (w + 1) >> 1;
+
+    // Select dither algorithm for the current _epd_mode.
+    auto dither_fn = _dither_row_none;
+    uint8_t dither = 70;
+    switch (_epd_mode) {
+      case epd_mode_t::epd_fastest: dither_fn = _dither_row_none;       break;
+      case epd_mode_t::epd_fast:    dither_fn = _dither_row_bayer_simple_pair; break;
+      case epd_mode_t::epd_text:    dither_fn = _dither_row_rgb_pair;    break;
+      case epd_mode_t::epd_quality: dither_fn = _dither_row_rgb_pair;    dither = 140; break;
+      default: break;
+    }
+
+    _bus->beginTransaction();
+    cs_control(false);
+
+    _send_command(0x83);    // Partial window
+    for (int_fast16_t v : { xs, xe, ys, ye }) {
+      _send_data(v >> 8);
+      _send_data(v & 0xFF);
+    }
+    _send_data(0x01);
+
+    _send_command(0x10);    // Data start transmission
+
+    bool ok = true;
+    for (int_fast16_t y = ys; y <= ye; ++y) {
+      uint8_t* dst = get_dma_buffer_checked(row_bytes);
+      if (!dst) { ok = false; break; }  // fall through to CS release / endTransaction
+      const bgr888_t* src = reinterpret_cast<const bgr888_t*>(_lines_buffer[y]) + xs;
+      dither_fn(src, dst, w, xs, y, dither);
+      _bus->writeBytes(dst, row_bytes, true, true);
+    }
+    _bus->wait();
+
+    cs_control(true);
+    _bus->endTransaction();
+    return ok;
+  }
+
+  void Panel_ED2208::setSleep(bool flg)
+  {
+    if (flg)
+    {
+      _wait_busy(REFRESH_TIMEOUT_MS);   // a refresh ends in deep sleep by itself
+      if (!_asleep && _cfg.pin_rst >= 0)   // only a reset wakes it again
+      {
+        _bus->beginTransaction();
+        cs_control(false);
+        _send_command(0x07);  // DEEP_SLEEP
+        _send_data(0xA5);
+        _bus->wait();
+        cs_control(true);
+        _bus->endTransaction();
+        _asleep = true;
+      }
+    }
+    else
+    {
+      _after_wake();
+    }
+  }
+
+  void Panel_ED2208::setPowerSave(bool flg)
+  {
+    if (flg) {
+      setSleep(true);
+    }
+  }
+
+//----------------------------------------------------------------------------
+ }
+}
