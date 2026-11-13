@@ -174,7 +174,9 @@ panic: REFUSED portfolio $64986064.71 exceeds cap $1000
 ```
 
 and the relay stores the matching record (`verdict: REJECTED`, `reason: portfolio
-$64986064.71 exceeds cap $1000`, `devicePubKey: FoGadzn…S2eU`).
+$64986064.71 exceeds cap $1000`, `devicePubKey: FoGadzn…S2eU`). The panel in
+`docs/hardware/refused-20261113.jpeg` is the third leg of that triple: the board
+in hand, screen reading REFUSED, wired to the same device key.
 
 The button is on GPIO0. `watch on` (see `help`) reports every GPIO that changes,
 which is how the pin was identified instead of guessed; GPIO12 on this carrier is
