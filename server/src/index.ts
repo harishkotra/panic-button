@@ -4,6 +4,7 @@ import fastifyStatic from "@fastify/static";
 import { existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { networkInterfaces } from "node:os";
 import { randomUUID } from "node:crypto";
 
 import { Policy, PanicRecord, Chain, Holding } from "./types.ts";
@@ -370,5 +371,17 @@ if (existsSync(webDist)) {
 }
 
 const port = Number(process.env.PORT ?? 8787);
-await app.listen({ port, host: "127.0.0.1" });
-console.log(`panic-button relay on http://127.0.0.1:${port}`);
+
+// the address the device should be pointed at with `set relay`
+function lanIP(): string {
+  for (const list of Object.values(networkInterfaces())) {
+    for (const a of list ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return "127.0.0.1";
+}
+// 0.0.0.0 so the device on the LAN can reach the relay; set HOST=127.0.0.1 to
+// keep it loopback-only when you are only using the browser console.
+await app.listen({ port, host: process.env.HOST ?? "0.0.0.0" });
+console.log(`panic-button relay on http://127.0.0.1:${port} (LAN: http://${lanIP()}:${port})`);

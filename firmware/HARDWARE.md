@@ -2,7 +2,10 @@
 
 You need: a Dabao / YD-ESP32-S3 board, an SPI TFT (ILI9341, ST7789 or ST7735),
 one momentary button for the plunger, optionally a second switch under the cover,
-a USB-C cable, and the same WiFi network as the relay.
+a USB-C cable, and the same WiFi network as the relay. The relay binds all
+interfaces by default and prints the exact address to use, e.g.
+`panic-button relay on http://127.0.0.1:8787 (LAN: http://192.168.68.60:8787)`;
+set HOST=127.0.0.1 to keep it loopback-only for browser-only use.
 
 Nothing in this firmware is compiled for a specific board. The panel driver,
 pins, WiFi credentials and relay URL all live in NVS and are set once over the
@@ -71,7 +74,7 @@ stops claiming there is one).
 ```bash
 set ssid <your wifi>
 set pass <your wifi password>
-set relay http://<your-laptop-lan-ip>:8787
+set relay http://<your-laptop-lan-ip>:8787   # printed at relay startup as (LAN: ...)
 set account intents.near
 set driver ili9341
 set size 240 320
