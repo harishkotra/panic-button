@@ -572,45 +572,49 @@ static void printHelp() {
   Serial.println();
 }
 
+// A blind panel is almost always a config mismatch, not dead hardware: the SPI
+// bus is write-only, so `test` reports "init ok" even when nothing is wired.
+// Cycle the plausible combinations, stamp the label on the panel, and let the
+// person watching read back whichever one appears.
+//
+// ST7735 is deliberately absent: switching to it from another panel wedges the
+// board mid-cycle (the log stops dead at that combo), and a 1.8" red-tab panel is
+// not what this build ships with. Revisit only with a confirmed ST7735 module.
 static void probePanel() {
-  // A blind panel is almost always a config mismatch, not dead hardware: the SPI
-  // bus is write-only, so `test` reports "init ok" even when nothing is wired.
-  // Cycle the plausible combinations, stamp the label on the panel, and let the
-  // person watching read back whichever one appears.
-  const char *names[3] = {"ili9341", "st7789", "st7735"};
-  const int ws[2] = {240, 128};
-  const int hs[2] = {320, 160};
+  const char *names[2] = {"ili9341", "st7789"};
+  // each size entry is tried with both inversions, so 2 drivers x 4 sizes x 2 = 16
+  const int ws[4] = {240, 135, 128, 240};
+  const int hs[4] = {320, 240, 160, 240};
   const int bls[2] = {cfg.bl, -1};
-  const uint16_t bg[3] = {0xF800, 0x07E0, 0x001F};
+  const uint16_t bg[2] = {0xF800, 0x07E0};
 
   int savedDrv = cfg.drv, savedW = cfg.w, savedH = cfg.h, savedInv = cfg.inv, savedBl = cfg.bl;
   int savedRot = cfg.rot;
-  int n = 0, total = 3 * 2 * 2 * 2 * 2;
+  int n = 0, total = 16;
 
-  for (int d = 0; d < 3; d++)
-    for (int inv = 0; inv < 2; inv++)
-      for (int s = 0; s < 2; s++)
-        for (int b = 0; b < 2; b++) {
-          n++;
-          cfg.drv = d; cfg.inv = inv; cfg.w = ws[s]; cfg.h = hs[s]; cfg.bl = bls[b]; cfg.rot = 0;
-          tft.ready = false;
-          tft.configure();
-          Serial.printf("probe %d/%d %s %dx%d inv=%d bl=%d %s\n", n, total, names[d], ws[s], hs[s], inv,
-                        bls[b], tft.ready ? "init ok" : "init FAILED");
-          if (!tft.ready) continue;
-          int W = tft.width(), H = tft.height();
-          tft.fillScreen(bg[d]);
-          tft.fillRect(0, 0, W, H / 3, 0x0000);
-          tft.setTextColor(0xFFFF, 0x0000);
-          tft.setTextSize(3);
-          tft.drawString(String(n).c_str(), 6, 6);
-          tft.setTextSize(1);
-          tft.drawString(names[d], 6, H / 3 + 8);
-          tft.drawString(String(W) + "x" + String(H), 6, H / 3 + 22);
-          tft.drawString("inv" + String(inv), 6, H / 3 + 36);
-          tft.drawString(bls[b] < 0 ? "bl none" : ("bl" + String(bls[b])).c_str(), 6, H / 3 + 50);
-          delay(3000);
-        }
+  for (int d = 0; d < 2; d++)
+    for (int s = 0; s < 4; s++)
+      for (int inv = 0; inv < 2; inv++) {
+        n++;
+        cfg.drv = d; cfg.inv = inv; cfg.w = ws[s]; cfg.h = hs[s]; cfg.bl = bls[inv]; cfg.rot = 0;
+        tft.ready = false;
+        tft.configure();
+        Serial.printf("probe %d/%d %s %dx%d inv=%d bl=%d %s\n", n, total, names[d], ws[s], hs[s], inv,
+                      bls[inv], tft.ready ? "init ok" : "init FAILED");
+        if (!tft.ready) continue;
+        int W = tft.width(), H = tft.height();
+        tft.fillScreen(bg[d]);
+        tft.fillRect(0, 0, W, H / 3, 0x0000);
+        tft.setTextColor(0xFFFF, 0x0000);
+        tft.setTextSize(3);
+        tft.drawString(String(n).c_str(), 6, 6);
+        tft.setTextSize(1);
+        tft.drawString(names[d], 6, H / 3 + 8);
+        tft.drawString(String(W) + "x" + String(H), 6, H / 3 + 22);
+        tft.drawString("inv" + String(inv), 6, H / 3 + 36);
+        tft.drawString(bls[inv] < 0 ? "bl none" : ("bl" + String(bls[inv])).c_str(), 6, H / 3 + 50);
+        delay(2500);
+      }
 
   cfg.drv = savedDrv; cfg.w = savedW; cfg.h = savedH; cfg.inv = savedInv; cfg.bl = savedBl; cfg.rot = savedRot;
   tft.ready = false;
