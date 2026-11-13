@@ -1,0 +1,4 @@
+panic: challenge
+panic: signed 178 bytes, challenge b3b94f30-4efb-431a-b4a9-2bcb419ce328
+panic: relay 402
+panic: REFUSED portfolio $65502272.25 exceeds cap $1000
