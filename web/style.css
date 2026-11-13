@@ -262,6 +262,8 @@ th, td { text-align: left; vertical-align: baseline; }
   font-variant-numeric: tabular-nums;
 }
 .legs td.num, .legs th.num { text-align: right; padding-right: 0; }
+.legs th:nth-child(5), .legs td:nth-child(5) { padding-right: var(--s3); }
+.legs th:nth-child(6), .legs td:nth-child(6) { min-width: 46px; }
 .legs tr:last-child td { border-bottom: none; }
 .legs .chain { font-family: var(--sans); font-size: 12px; }
 .legs .amt { color: var(--ink-2); }

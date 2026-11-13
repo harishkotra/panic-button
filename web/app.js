@@ -149,7 +149,7 @@ function renderPolicy(p) {
     `<dt>cooldown</dt><dd>${p.cooldownSec}s</dd>` +
     `<dt>legs</dt><dd>${p.holdings.length}</dd>` +
     `<dt>attached</dt><dd>${attached.length ? attached.map(([c]) => CHAIN_LABEL[c]).join(", ") : "NEAR only"}</dd>` +
-    `<dt>safe hash</dt><dd>${(p.safeHash ?? "").slice(0, 10)}…</dd>`;
+    `<dt>safe hash</dt><dd>${p.safeHash ? p.safeHash.slice(0, 10) + "…" : "not set"}</dd>`;
 }
 
 function renderLog(panics) {

@@ -159,7 +159,11 @@ later.
   (14.4%). It was not flashed here, because the board is on the other desk. `ed25519` is vendored
   under `firmware/lib/ed25519` (orlp, CC0) since the registry package does not exist; compile
   errors found that way are the reason the signing call now uses the derived private key.
-- No enclosure, no battery, no OTA. The object in the video is the reference build on a breadboard.
+- **The video and screenshots show the browser console, not a physical device.** The device in them
+  is HTML and CSS drawn at the S3's 320x240 proportions; the button, cover and screen states are the
+  console's, and the three calls behind it are the real ones. No S3 was flashed for this build, so
+  there is no footage of the real screen. Treat the clip as proof of the flow, not of the hardware.
+- No enclosure, no battery, no OTA.
 
 ---
 
