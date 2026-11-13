@@ -129,7 +129,10 @@ class Screen : public lgfx::LGFX_Device {
     pc.memory_width = cfg.w;
     pc.memory_height = squareST ? 320 : cfg.h;
     pc.panel_width = cfg.w;
-    pc.panel_height = cfg.h;
+    // The glass on this 1.54" module loses the last ~20 rows behind the bezel, and
+    // every layout here is written against the real visible box, so claim 20 rows
+    // less than the panel datasheet rather than drawing text nobody can see.
+    pc.panel_height = cfg.h > 60 ? cfg.h - 20 : cfg.h;
     pc.offset_x = cfg.offX;
     pc.offset_y = cfg.offY + (squareST ? 80 : 0);
     pc.invert = cfg.inv;
